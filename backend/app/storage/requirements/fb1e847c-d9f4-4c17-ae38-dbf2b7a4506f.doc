@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>[#RGZN-998] 区域内离线分析，轨迹接续前后的目标只计算一次</title>
+    <meta http-equiv="Content-Type" Content="application/vnd.ms-word; charset=UTF-8">
+        <style type="text/css">
+
+.tableBorder, .grid
+{
+    background-color: #fff;
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.tableBorder td, .grid td
+{
+    vertical-align: top;
+    padding: 2px;
+    border: 1px solid #ccc;
+}
+
+.noPadding
+{
+    padding: 0 !important;
+}
+
+h3 .subText
+{
+    font-size: 60%;
+    font-weight: normal;
+}
+
+.tabLabel
+{
+    font-weight: bold;
+    border: 1px solid #ccc;
+    border-bottom:none;
+    padding: 2px;
+    display: inline;
+}
+
+td.blank
+{
+    padding: 0;
+    margin: 0;
+}
+
+.blank td
+{
+    border: none;
+}
+
+#descriptionArea
+{
+    margin: 0;
+    padding: 2px;
+    border: 1px solid #ccc;
+}
+
+hr
+{
+    border-top:1px solid #aaa;
+}
+
+hr.fullcontent
+{
+  height: 15px;
+  padding: 10px 0;
+  background: #fff url('http://jira.uniseas.com.cn:8080/images/icons/hr.gif') no-repeat scroll center;
+}
+
+</style>
+
+</head>
+<body>
+
+<table class="tableBorder" cellpadding="0" cellspacing="0" border="0" width="100%">
+    <tr>
+        <td bgcolor="#f0f0f0" width="100%" colspan="2" valign="top">
+                            <h3 class="formtitle">
+                        [RGZN-998]&nbsp;<a href="http://jira.uniseas.com.cn:8080/browse/RGZN-998">区域内离线分析，轨迹接续前后的目标只计算一次</a>
+            <span class="subText">
+               创建日期: 2025/12/09                   &nbsp;已更新: 2026/02/28
+
+                                                    &nbsp;已解决: 2026/02/02
+                            </span>
+            </h3>
+        </td>
+    </tr>
+    <tr>
+        <td width="20%"><b>状态:</b></td>
+        <td width="80%">已解决</td>
+    </tr>
+    <tr>
+        <td width="20%"><b>项目:</b></td>
+        <td width="80%"><a href="http://jira.uniseas.com.cn:8080/secure/BrowseProject.jspa?id=12410">2025年基于人工智能的船舶行为可视化分析管理系统v2.0</a></td>
+    </tr>
+
+        <tr>
+            <td><b>模块:</b></td>
+            <td>
+                            无
+                </td>
+    </tr>
+    
+
+        <tr>
+            <td><b>影响版本:</b></td>
+            <td>
+                            无
+                </td>
+    </tr>
+    
+
+        <tr>
+            <td><b>修复的版本:</b></td>
+            <td>
+                            无
+                </td>
+    </tr>
+    
+    </table>
+
+<br />
+<table class="grid" cellpadding="0" cellspacing="0" border="0" width="100%">
+    <tr>
+        <td bgcolor="#f0f0f0" valign="top" width="20%">
+            <b>类型:</b>
+        </td>
+        <td bgcolor="#ffffff" valign="top"  width="30%" >
+            任务
+        </td>
+
+                    <td bgcolor="#f0f0f0">
+                <b>优先级:</b>
+            </td>
+            <td bgcolor="#ffffff" valign="top" nowrap>
+                High
+            </td>
+            </tr>
+    <tr>
+                        <td bgcolor="#f0f0f0" valign="top" width="20%">
+                <b>报告人:</b>
+            </td>
+            <td bgcolor="#ffffff" valign="top"  width="30%" >
+                                            <a class="user-hover" rel="huangwl" id="word_reporter_huangwl" href="http://jira.uniseas.com.cn:8080/secure/ViewProfile.jspa?name=huangwl">黄文龙</a>
+                            </td>
+        
+                    <td bgcolor="#f0f0f0" width="20%">
+                <b>经办人:</b>
+            </td>
+            <td bgcolor="#ffffff" valign="top" nowrap  width="30%" >
+                                            <a class="user-hover" rel="caoqin" id="word_assignee_caoqin" href="http://jira.uniseas.com.cn:8080/secure/ViewProfile.jspa?name=caoqin">曹琴</a>
+                            </td>
+            </tr>
+    	<tr>
+		<td bgcolor="#f0f0f0" width="20%">
+			<b>解决结果:</b>
+		</td>
+		<td bgcolor="#ffffff" valign="top" width="30%" nowrap>
+                            完成
+                    </td>
+                    <td bgcolor="#ffffff" colspan="2">&nbsp;</td>
+        
+    </tr>
+    
+        <tr>
+        <td bgcolor="#f0f0f0" width="20%">
+            <b>标签:</b>
+        </td>
+        <td id="labels-57405-value" class="value" bgcolor="#ffffff" valign="top" colspan="3" nowrap>
+                            无
+                    </td>
+    </tr>
+    
+    	<tr>
+        		<td bgcolor="#f0f0f0" width="20%"><b>剩余的估算:</b></td>
+        <td bgcolor="#ffffff" valign="top" nowrap width="80%" colspan="3">
+                            0 minutes
+            		</td>
+    </tr>
+    <tr>
+                <td bgcolor="#f0f0f0" width="20%"><b>耗费时间:</b></td>
+		<td bgcolor="#ffffff" valign="top" nowrap width="80%" colspan="3">
+                            1 week, 1 day, 6 hours
+            		</td>
+	</tr>
+    <tr>
+                <td bgcolor="#f0f0f0" width="20%"><b>初始预估:</b></td>
+		<td bgcolor="#ffffff" valign="top" nowrap width="80%" colspan="3">
+                            尚未指定
+            		</td>
+    </tr>
+    
+    </table>
+
+
+
+    <br />
+
+    	<table class="grid" cellpadding="0" cellspacing="0" border="0" width="100%">
+            
+
+                <tr>
+            <td bgcolor="#f0f0f0" width=20% valign=top>
+                <b>附件:</b>
+            </td>
+            <td bgcolor="#ffffff" valign="top">
+                                    <img src="http://jira.uniseas.com.cn:8080/images/icons/attach/image.gif" height="16" width="16" border="0" alt="PNG文件">
+                    image-2025-12-09-18-38-51-400.png &nbsp;&nbsp;&nbsp;
+                                    <img src="http://jira.uniseas.com.cn:8080/images/icons/attach/image.gif" height="16" width="16" border="0" alt="PNG文件">
+                    image-2025-12-09-18-40-18-129.png &nbsp;&nbsp;&nbsp;
+                                    <img src="http://jira.uniseas.com.cn:8080/images/icons/attach/image.gif" height="16" width="16" border="0" alt="PNG文件">
+                    image-2026-01-05-14-53-35-052.png &nbsp;&nbsp;&nbsp;
+                                    <img src="http://jira.uniseas.com.cn:8080/images/icons/attach/image.gif" height="16" width="16" border="0" alt="PNG文件">
+                    screenshot-1.png &nbsp;&nbsp;&nbsp;
+                            </td>
+        </tr>
+        
+    
+
+
+
+                        <tr>
+                <td bgcolor="#f0f0f0" width="20%" valign="top"><b>干系人:</b></td>
+                <td id="customfield_10712-57405-value" class="value" bgcolor="#ffffff" width="80%">    <div class="shorten" id="customfield_10712-field">
+                                    <span class="tinylink">        <span class="user-hover" rel="liujingqiang" id="multiuser_cf_liujingqiang">柳景强</span></span>,                                                 <span class="tinylink">        <span class="user-hover" rel="wangrd" id="multiuser_cf_wangrd">王润东</span></span>,                                                 <span class="tinylink">        <span class="user-hover" rel="zhongshuai" id="multiuser_cf_zhongshuai">钟帅</span></span>                        </div>
+</td>
+            </tr>
+                                <tr>
+                <td bgcolor="#f0f0f0" width="20%" valign="top"><b>Sprint:</b></td>
+                <td id="customfield_10004-57405-value" class="value" bgcolor="#ffffff" width="80%">2025基线产品 Sprint 69</td>
+            </tr>
+            </table>
+
+    <br/>
+
+    <table cellpadding="2" cellspacing="0" border="0" width="100%" align="center">
+    <tr>
+        <td bgcolor="#bbbbbb" width="1%" nowrap align="center">
+            &nbsp;<font color="#ffffff"><b>描述</b></font>&nbsp;
+        </td>
+        <td>&nbsp;</td>
+    </tr>
+    </table>
+
+    <table cellpadding="0" cellspacing="0" border="0" width="100%">
+    <tr>
+        <td id="descriptionArea">
+            <p><b>需求描述</b></p>
+
+<p>做区域内目标的离线分析时，希望能统计实际的目标数量，但雷达目标经常会中断后再生产新的ID，导致数量不准确。</p>
+
+<p>当前轨迹接续已经较为准确，希望能借助轨迹接续前后目标的关联，将重复的目标剔除掉，尽可能的离真实的目标数量更接近。</p>
+
+<p>如下图所示：同一艘船，在轨迹接续前后，都会产生区域内目标的记录。这就在统计时，会产生误判。</p>
+
+<p><b>DOD</b></p>
+
+<p>针对区域内目标的离线分析查看结果界面，<font color="#d04437">增加*【接续去重】*的开关按钮。</font></p>
+
+<p>默认开启，当打开该开关后，则对轨迹接续前后的目标，仅保留一条记录。</p>
+
+<p>（可保留最后一条）</p>
+
+<p>  <span class="image-wrap" style=""><img src="http://jira.uniseas.com.cn:8080/secure/attachment/43929/43929_image-2026-01-05-14-53-35-052.png" style="border: 0px solid black" /></span></p>
+
+<p><span class="image-wrap" style=""><img src="http://jira.uniseas.com.cn:8080/secure/attachment/43621/43621_image-2025-12-09-18-38-51-400.png" style="border: 0px solid black" /></span></p>
+
+<p> </p>
+
+<p><span class="image-wrap" style=""><img src="http://jira.uniseas.com.cn:8080/secure/attachment/43620/43620_image-2025-12-09-18-40-18-129.png" style="border: 0px solid black" /></span></p>
+            <br/>
+        </td>
+    </tr>
+    </table>
+
+    <br/>
+
+    <table cellpadding="2" cellspacing="0" border="0" width="100%" align="center">
+    <tr>
+        <td bgcolor="#bbbbbb" width="1%" nowrap align="center">
+            &nbsp;<font color="#ffffff"><b>注释</b></font>&nbsp;
+        </td>
+        <td>&nbsp;</td>
+    </tr>
+    </table>
+
+    <table cellpadding="0" cellspacing="0" border="0" width="100%" class="grid" style="margin: 0;">
+                <tr id="comment-header-46312"><td bgcolor="#f0f0f0">
+            评论于 
+                                                        <a class="user-hover" rel="liujingqiang" id="word_commented_liujingqiang" href="http://jira.uniseas.com.cn:8080/secure/ViewProfile.jspa?name=liujingqiang">柳景强</a>
+                                        <font size="-2">
+            [
+                <font color="#336699">2026/01/30</font>
+
+                            ]
+            </font>
+
+        </td></tr>
+        <tr id="comment-body-46312"><td bgcolor="#ffffff">
+            <p>/api/analysis/analysis/result/queryTaskResults分析列表接口加入参数isWithContinuation，传true会有轨迹接续去重筛除逻辑，不传默认为false没有去重筛除 ，如下图：<br/>
+ <span class="image-wrap" style=""><a id="44406_thumb" href="http://jira.uniseas.com.cn:8080/secure/attachment/44406/44406_screenshot-1.png" title="screenshot-1.png" file-preview-type="image" file-preview-id="44406" file-preview-title="screenshot-1.png"><img src="http://jira.uniseas.com.cn:8080/secure/thumbnail/44406/_thumb_44406.png" style="border: 0px solid black" /></a></span> </p>
+        </td></tr>
+                <tr id="comment-header-46313"><td bgcolor="#f0f0f0">
+            评论于 
+                                                        <a class="user-hover" rel="liujingqiang" id="word_commented_liujingqiang" href="http://jira.uniseas.com.cn:8080/secure/ViewProfile.jspa?name=liujingqiang">柳景强</a>
+                                        <font size="-2">
+            [
+                <font color="#336699">2026/01/30</font>
+
+                            ]
+            </font>
+
+        </td></tr>
+        <tr id="comment-body-46313"><td bgcolor="#ffffff">
+            <p>由于目标轨迹接续为树/图结构关系，Starrocks暂不支持递归查询树状结构；当前轨迹接续去重逻辑实现为三层固定深度查找目标的接续关系树，保留接续关系目标中报警最新数据；三层固定深度查询存在少数目标不在关系树中，但是已满足绝大数情况。</p>
+        </td></tr>
+                <tr id="comment-header-46321"><td bgcolor="#f0f0f0">
+            评论于 
+                                                        <a class="user-hover" rel="wangrd" id="word_commented_wangrd" href="http://jira.uniseas.com.cn:8080/secure/ViewProfile.jspa?name=wangrd">王润东</a>
+                                        <font size="-2">
+            [
+                <font color="#336699">2026/02/02</font>
+
+                            ]
+            </font>
+
+        </td></tr>
+        <tr id="comment-body-46321"><td bgcolor="#ffffff">
+            <p>前端完成开发。</p>
+        </td></tr>
+            </table>
+曹琴 通过JIRA 7.4.1#74003-sha1:03b99481f2360849188a0c0422a6d3f38eac3534 生成于 Wed Mar 11 17:05:52 CST 2026。
+
+</body>
+</html>

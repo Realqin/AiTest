@@ -1,0 +1,14 @@
+{
+  "active_profile": "default",
+  "profiles": {
+    "default": {
+      "enabled": true,
+      "base_url": "http://jira.uniseas.com.cn:8080/",
+      "auth_type": "basic",
+      "username": "caoqin",
+      "token": "caoqin@123",
+      "api_path": "/rest/api/2",
+      "verify_ssl": false
+    }
+  }
+}
