@@ -517,6 +517,14 @@ select {
   cursor: not-allowed;
 }
 
+input:disabled,
+select:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+  background: #f3f4f6;
+}
+
 .mini-btn {
   border: 0;
   background: #1890ff;
@@ -2162,6 +2170,14 @@ select {
   vertical-align: top;
 }
 
+.prompt-admin-table td:last-child {
+  white-space: nowrap;
+}
+
+.prompt-admin-table td:last-child .mini-btn + .mini-btn {
+  margin-left: 8px;
+}
+
 .llm-form-body > label,
 .prompt-form-body > label {
   margin-bottom: -6px;
@@ -2323,6 +2339,13 @@ select {
 
 .prompt-editor-wrap textarea {
   padding-bottom: 34px;
+}
+
+.form-tip {
+  margin-top: 8px;
+  color: #8a5a00;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .text-counter {
@@ -2791,6 +2814,20 @@ select {
   border-radius: 14px;
   overflow: hidden;
   background: #fff;
+}
+
+.case-generator-page {
+  height: calc(100vh - 96px);
+  overflow-y: auto;
+  padding-bottom: 20px;
+}
+
+.case-generator-page .case-generation-panel {
+  min-height: min-content;
+}
+
+.case-generator-page .case-stage-template {
+  min-height: 240px;
 }
 
 .case-list-scroll {
@@ -3849,4 +3886,159 @@ select {
     min-height: 540px;
     max-height: calc(100vh - 140px);
   }
+}
+
+
+.case-image-section,
+.case-composer-wrap {
+  flex: 1;
+}
+
+.case-composer-row {
+  align-items: stretch;
+}
+
+.case-composer {
+  min-height: 190px;
+  border: 1px solid #b9d6ff;
+  border-radius: 28px;
+  background: #ffffff;
+  box-shadow: 0 10px 30px rgba(78, 120, 189, 0.08);
+  padding: 18px 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.case-composer.has-images {
+  padding-top: 14px;
+}
+
+.case-composer-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.case-image-card {
+  position: relative;
+  width: 84px;
+  height: 68px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: 18px;
+  background: #eef3f8;
+  box-shadow: inset 0 0 0 1px rgba(216, 226, 238, 0.92);
+}
+
+.case-image-card img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.case-image-remove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.78);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: scale(0.92);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.case-image-card:hover .case-image-remove {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.case-composer-input {
+  flex: 1;
+  min-height: 72px;
+  border: none;
+  resize: none;
+  outline: none;
+  font-size: 16px;
+  line-height: 1.6;
+  color: #2b3d52;
+  padding: 4px 2px;
+  background: transparent;
+}
+
+.case-composer-input::placeholder {
+  color: #c9c1b7;
+}
+
+.case-composer-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.case-image-add.composer-add {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: #5f738d;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 34px;
+  font-weight: 300;
+  line-height: 1;
+}
+
+.case-image-add.composer-add:hover {
+  background: #f3f7fb;
+  color: #1677ff;
+}
+
+.case-composer-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: #8fa1b7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.case-composer-send {
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 999px;
+  background: #1677ff;
+  color: #fff;
+  font-size: 24px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 22px rgba(22, 119, 255, 0.24);
+}
+
+.case-composer-send:disabled {
+  opacity: 0.6;
+}
+
+.case-image-subtip {
+  margin-top: 8px;
+  margin-left: 6px;
+  font-size: 12px;
+  color: #8b9cb0;
 }

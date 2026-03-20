@@ -220,6 +220,7 @@ class PromptTemplateRecord(StructuredRecordMixin, Base):
     remark: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    is_preset: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     extra_data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
@@ -555,6 +556,38 @@ class RequirementReviewRepository(ListRepositoryBase):
             session.commit()
 
 
+PRESET_PROMPT_IDENTITIES = {
+    ("\u901a\u7528\u5bf9\u8bdd", "\u9ed8\u8ba4\u901a\u7528\u63d0\u793a\u8bcd"),
+    ("\u9700\u6c42\u8bc4\u5ba1", "\u53ef\u6d4b\u6027\u5206\u6790"),
+    ("\u6d4b\u8bd5\u7528\u4f8b", "\u6d4b\u8bd5\u7528\u4f8b-\u9700\u6c42\u5206\u6790"),
+    ("\u6d4b\u8bd5\u7528\u4f8b", "\u6d4b\u8bd5\u7528\u4f8b-\u6d4b\u8bd5\u70b9\u68b3\u7406"),
+    ("\u6d4b\u8bd5\u7528\u4f8b", "\u6d4b\u8bd5\u7528\u4f8b-\u751f\u6210\u7528\u4f8b"),
+    ("\u6d4b\u8bd5\u7528\u4f8b", "\u6d4b\u8bd5\u7528\u4f8b-\u901a\u7528"),
+}
+
+ALLOWED_TEST_CASE_PROMPT_NAMES = {
+    "\u6d4b\u8bd5\u7528\u4f8b-\u9700\u6c42\u5206\u6790",
+    "\u6d4b\u8bd5\u7528\u4f8b-\u6d4b\u8bd5\u70b9\u68b3\u7406",
+    "\u6d4b\u8bd5\u7528\u4f8b-\u751f\u6210\u7528\u4f8b",
+    "\u6d4b\u8bd5\u7528\u4f8b-\u901a\u7528",
+}
+
+PRESET_PROMPT_REMARKS = {
+    "test-case-stage:clarify",
+    "test-case-stage:test_points",
+    "test-case-stage:cases",
+}
+
+
+def _is_preset_prompt(payload: dict[str, Any]) -> bool:
+    prompt_type = str(payload.get("prompt_type", "") or "")
+    if prompt_type == "\u6d4b\u8bd5\u7528\u4f8b":
+        return True
+    identity = (prompt_type, str(payload.get("name", "") or ""))
+    remark = str(payload.get("remark", "") or "")
+    return identity in PRESET_PROMPT_IDENTITIES or remark in PRESET_PROMPT_REMARKS
+
+
 class DatabaseStore:
     MANUAL_CASE_REQUIREMENT_ID = "manual_case_root"
 
@@ -599,6 +632,9 @@ class DatabaseStore:
             ],
             "requirements": [
                 ("project_id", "project_id VARCHAR(64) NOT NULL DEFAULT ''"),
+            ],
+            "prompt_templates": [
+                ("is_preset", "is_preset TINYINT(1) NOT NULL DEFAULT 0"),
             ],
         }
 
@@ -740,6 +776,7 @@ class DatabaseStore:
                     "remark": "",
                     "enabled": True,
                     "is_default": True,
+                    "is_preset": True,
                     "created_at": created_at,
                     "updated_at": updated_at,
                 },
@@ -751,6 +788,7 @@ class DatabaseStore:
                     "remark": "",
                     "enabled": True,
                     "is_default": False,
+                    "is_preset": True,
                     "created_at": created_at,
                     "updated_at": updated_at,
                 },
@@ -758,7 +796,6 @@ class DatabaseStore:
                 record = {"id": self.new_id("prompt_templates"), **payload}
                 self.prompt_templates[record["id"]] = record
 
-        self._ensure_test_case_prompt_templates(created_at, updated_at)
 
     def _ensure_manual_case_requirement(self, created_at: str, updated_at: str) -> None:
         if self.requirements.get(self.MANUAL_CASE_REQUIREMENT_ID):
@@ -814,7 +851,7 @@ class DatabaseStore:
         defaults = [
             {
                 "prompt_type": "\u6d4b\u8bd5\u7528\u4f8b",
-                "name": "\u6d4b\u8bd5\u7528\u4f8b-\u9700\u6c42\u62c6\u89e3",
+                "name": "\u6d4b\u8bd5\u7528\u4f8b-\u9700\u6c42\u5206\u6790",
                 "description": "\u7528\u4e8e\u5148\u8bc6\u522b\u9700\u6c42\u4e2d\u7684\u529f\u80fd\u70b9\u3001\u4e3b\u6d41\u7a0b\u3001\u5173\u952e\u5206\u652f\u548c\u8fb9\u754c\u3002",
                 "content": (
                     "\u4f60\u662f\u4e00\u4f4d\u8d44\u6df1\u6d4b\u8bd5\u5206\u6790\u5e08\u3002\u8bf7\u57fa\u4e8e\u8f93\u5165\u7684\u9700\u6c42\u4fe1\u606f\u8f93\u51fa\u201c\u9700\u6c42\u62c6\u89e3\u201d\u7ed3\u679c\uff0c\u76ee\u6807\u662f\u5148\u660e\u786e\u8be5\u9700\u6c42\u5305\u542b\u591a\u5c11\u4e2a\u529f\u80fd\u70b9\uff0c\u4ee5\u53ca\u6bcf\u4e2a\u529f\u80fd\u70b9\u5bf9\u5e94\u7684\u4e3b\u6d41\u7a0b\u3001\u5173\u952e\u5206\u652f\u548c\u8fb9\u754c\u3002\n"
@@ -857,6 +894,21 @@ class DatabaseStore:
                 ),
                 "remark": "test-case-stage:cases",
             },
+            {
+                "prompt_type": "\u6d4b\u8bd5\u7528\u4f8b",
+                "name": "\u6d4b\u8bd5\u7528\u4f8b-\u901a\u7528",
+                "description": "\u7528\u4e8e\u5728\u7528\u4f8b\u7ba1\u7406\u4e2d\u7ed3\u5408\u622a\u56fe\u3001\u8865\u5145\u8bf4\u660e\u548c\u6d4b\u8bd5\u7c7b\u578b\u76f4\u63a5\u751f\u6210\u7ed3\u6784\u5316\u6d4b\u8bd5\u7528\u4f8b\u3002",
+                "content": (
+                    "\u4f60\u662f\u4e00\u4f4d\u8d44\u6df1\u6d4b\u8bd5\u5de5\u7a0b\u5e08\u3002\u8bf7\u57fa\u4e8e\u7528\u6237\u63d0\u4f9b\u7684\u9875\u9762\u622a\u56fe\u3001\u8865\u5145\u8bf4\u660e\u3001\u6d4b\u8bd5\u7c7b\u578b\u548c\u53ef\u9009\u77e5\u8bc6\u5e93\u4fe1\u606f\uff0c\u751f\u6210\u7ed3\u6784\u5316\u6d4b\u8bd5\u7528\u4f8b\u3002\n"
+                    "\u8f93\u51fa\u8981\u6c42\uff1a\n"
+                    "1. \u4f18\u5148\u8bc6\u522b\u9875\u9762\u4e2d\u7684\u6838\u5fc3\u6d41\u7a0b\u3001\u8f93\u5165\u9879\u3001\u72b6\u6001\u3001\u6309\u94ae\u3001\u63d0\u793a\u4fe1\u606f\u3001\u5217\u8868\u5b57\u6bb5\u548c\u6821\u9a8c\u89c4\u5219\u3002\n"
+                    "2. \u7ed3\u5408\u7528\u6237\u8865\u5145\u7684\u4e1a\u52a1\u89c4\u5219\uff0c\u8986\u76d6\u4e3b\u6d41\u7a0b\u3001\u5f02\u5e38\u6d41\u7a0b\u3001\u8fb9\u754c\u6761\u4ef6\u3001\u6743\u9650\u5dee\u5f02\u548c\u9ad8\u98ce\u9669\u573a\u666f\u3002\n"
+                    "3. \u6bcf\u6761\u7528\u4f8b\u90fd\u5fc5\u987b\u5305\u542b test_point\u3001title\u3001preconditions\u3001steps\u3001expected\u3001priority\u3001case_type\u3002\n"
+                    "4. steps \u5fc5\u987b\u662f\u53ef\u6267\u884c\u52a8\u4f5c\uff0cexpected \u5fc5\u987b\u662f\u53ef\u9a8c\u8bc1\u7ed3\u679c\uff0c\u907f\u514d\u7b3c\u7edf\u63cf\u8ff0\u3002\n"
+                    "5. case_type \u5fc5\u987b\u4ece\u7528\u6237\u9009\u62e9\u7684\u6d4b\u8bd5\u7c7b\u578b\u4e2d\u53d6\u503c\u3002"
+                ),
+                "remark": "test-case-standalone:general",
+            },
         ]
 
         existing_keys = {(item.get("prompt_type"), item.get("name")) for item in self.prompt_templates.values()}
@@ -869,6 +921,7 @@ class DatabaseStore:
                 **payload,
                 "enabled": True,
                 "is_default": False,
+                "is_preset": True,
                 "created_at": created_at,
                 "updated_at": updated_at,
             }

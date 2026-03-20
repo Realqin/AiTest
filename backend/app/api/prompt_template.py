@@ -18,6 +18,7 @@ class PromptTemplateIn(BaseModel):
     remark: str = Field(default="", max_length=200)
     enabled: bool = True
     is_default: bool = False
+    is_preset: bool = False
 
 
 class TogglePayload(BaseModel):
@@ -62,7 +63,12 @@ def _serialize_prompt_template(prompt: dict) -> dict:
     result["response_type"] = response_type
     result["response_format"] = response_format
     result["content"] = rendered_content
+    result["is_preset"] = bool(result.get("is_preset", False))
     return result
+
+
+def _is_json_response_type(value: str) -> bool:
+    return value in {"json-object", "json-array"}
 
 
 def _unset_defaults(prompt_type: str, current_id: str) -> None:
@@ -95,6 +101,7 @@ async def create_prompt_template(payload: PromptTemplateIn) -> dict:
         "remark": payload.remark,
         "enabled": payload.enabled,
         "is_default": payload.is_default,
+        "is_preset": payload.is_preset,
         "created_at": timestamp,
         "updated_at": timestamp,
     }
@@ -109,6 +116,9 @@ async def update_prompt_template(prompt_id: str, payload: PromptTemplateIn) -> d
     prompt = db.prompt_templates.get(prompt_id)
     if not prompt:
         raise HTTPException(status_code=404, detail="Prompt template not found")
+
+    is_preset = bool(prompt.get("is_preset", False))
+
     base_content, response_type, response_format, rendered_content = _resolve_prompt_fields(payload.model_dump())
     prompt.update(
         {
@@ -122,6 +132,7 @@ async def update_prompt_template(prompt_id: str, payload: PromptTemplateIn) -> d
             "remark": payload.remark,
             "enabled": payload.enabled,
             "is_default": payload.is_default,
+            "is_preset": is_preset,
             "updated_at": now_iso(),
         }
     )

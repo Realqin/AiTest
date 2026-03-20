@@ -669,7 +669,7 @@ export default function TestCaseWorkflowPage({ requirementId, onBack, onCasesCha
         setData(next);
         setDrafts(getInitialDrafts(next.workflow.stages));
       } catch (e) {
-        setError(e.message || "????");
+        setError(e.message || "\u751f\u6210\u6d4b\u8bd5\u7528\u4f8b\u5931\u8d25");
       } finally {
         setGeneratingStageKey("");
         setSubmitting(false);
@@ -846,7 +846,7 @@ export default function TestCaseWorkflowPage({ requirementId, onBack, onCasesCha
         <div className={isGeneratingStage ? "panel case-workflow-main is-busy" : "panel case-workflow-main"}>
           {isGeneratingStage && (
             <div className="case-workflow-loading-mask">
-              <img src={loadingGif} alt="???" className="case-workflow-loading-image" />
+              <img src={loadingGif} alt="\u751f\u6210\u4e2d" className="case-workflow-loading-image" />
             </div>
           )}
           {activeStage && (

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   createTestCase,
   generateStandaloneCaseGenerator,
@@ -32,12 +32,17 @@ const TEXT = {
   saveSuccessSuffix: " \u6761\u7528\u4f8b",
   saveError: "\u4fdd\u5b58\u7528\u4f8b\u5931\u8d25",
   title: "\u751f\u6210\u7528\u4f8b",
-  subtitle: "\u72ec\u7acb\u8f93\u5165\u6d4b\u8bd5\u70b9\u6216\u8865\u5145\u8bf4\u660e\u540e\uff0c\u76f4\u63a5\u751f\u6210\u5e76\u4fdd\u5b58\u6d4b\u8bd5\u7528\u4f8b\uff0c\u4e0d\u4e0e\u9700\u6c42\u6d41\u7a0b\u8282\u70b9\u7ed1\u5b9a\u3002",
+  subtitle: "\u901a\u8fc7\u622a\u56fe\u3001\u8bf4\u660e\u6587\u5b57\u548c\u6d4b\u8bd5\u7c7b\u578b\uff0c\u76f4\u63a5\u751f\u6210\u72ec\u7acb\u6d4b\u8bd5\u7528\u4f8b\u3002",
   caseTypeLabel: "\u6d4b\u8bd5\u7c7b\u578b",
   knowledgeBaseLabel: "\u77e5\u8bc6\u5e93",
   kbHint: "\u652f\u6301\u591a\u9009\uff0c\u70b9\u51fb\u53f3\u4fa7 \u00d7 \u53ef\u5feb\u901f\u6e05\u7a7a",
+  composerLabel: "\u622a\u56fe\u4e0e\u8865\u5145\u8bf4\u660e",
+  screenshotHint: "\u652f\u6301\u76f4\u63a5\u7c98\u8d34\u56fe\u7247\uff0c\u6216\u70b9\u51fb + \u4e0a\u4f20\u622a\u56fe\u3002",
+  screenshotSubHint: "\u9f20\u6807\u79fb\u5165\u7f29\u7565\u56fe\u53ef\u5220\u9664\uff0c\u751f\u6210\u65f6\u4f1a\u4e00\u8d77\u53d1\u7ed9\u6a21\u578b\u8bc6\u522b\u3002",
+  imageTypeError: "\u4ec5\u652f\u6301\u4e0a\u4f20\u56fe\u7247\u6587\u4ef6",
+  imageLimitError: "\u6700\u591a\u53ea\u80fd\u6dfb\u52a0 8 \u5f20\u622a\u56fe",
   promptLabel: "\u4eba\u5de5\u8865\u5145\u63d0\u793a\u8bcd",
-  promptPlaceholder: "\u53ef\u4ee5\u5728\u8fd9\u91cc\u8865\u5145\u6d4b\u8bd5\u8303\u56f4\u3001\u4e1a\u52a1\u89c4\u5219\u3001\u91cd\u70b9\u98ce\u9669\u6216\u6d4b\u8bd5\u70b9\u63cf\u8ff0\u3002",
+  promptPlaceholder: "\u53d1\u9001\u622a\u56fe\u6216\u5728\u8fd9\u91cc\u8865\u5145\u9875\u9762\u573a\u666f\u3001\u4e1a\u52a1\u89c4\u5219\u3001\u64cd\u4f5c\u76ee\u6807\u3001\u98ce\u9669\u70b9\u7b49\u8bf4\u660e...",
   addCase: "\u65b0\u589e\u7528\u4f8b",
   generating: "\u751f\u6210\u4e2d...",
   regenerate: "\u751f\u6210/\u91cd\u65b0\u751f\u6210\u7528\u4f8b",
@@ -51,10 +56,11 @@ const TEXT = {
   expected: "\u9884\u671f\u7ed3\u679c",
   priority: "\u4f18\u5148\u7ea7",
   operations: "\u64cd\u4f5c",
-  empty: "\u6682\u65e0\u7528\u4f8b\uff0c\u8bf7\u5148\u70b9\u51fb\u201c\u751f\u6210/\u91cd\u65b0\u751f\u6210\u7528\u4f8b\u201d\u6216\u624b\u52a8\u65b0\u589e\u3002",
+  empty: "\u6682\u65e0\u7528\u4f8b\uff0c\u8bf7\u5148\u4e0a\u4f20\u622a\u56fe\u5e76\u70b9\u51fb\u201c\u751f\u6210/\u91cd\u65b0\u751f\u6210\u7528\u4f8b\u201d\uff0c\u6216\u624b\u52a8\u65b0\u589e\u3002",
   copy: "\u590d\u5236",
   delete: "\u5220\u9664",
   templateLabel: "\u9636\u6bb5\u7cfb\u7edf\u63d0\u793a\u8bcd",
+  addImage: "+",
 };
 
 const DEFAULT_CASE_TYPE_OPTIONS = [
@@ -76,6 +82,7 @@ const DEFAULT_PRIORITY_OPTIONS = [
 
 const DEFAULT_KNOWLEDGE_BASES = [TEXT.kbReq, TEXT.kbHistory, TEXT.kbBug, TEXT.kbApi];
 const MANUAL_CASE_REQUIREMENT_ID = "manual_case_root";
+const MAX_IMAGES = 8;
 
 function createEmptyCase(caseType = "") {
   return {
@@ -100,7 +107,16 @@ function formatLines(value) {
   return Array.isArray(value) ? value.join("\n") : "";
 }
 
-export default function StandaloneCaseGeneratorPage({ onCasesChanged }) {
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("read failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
+export default function StandaloneCaseGeneratorPage({ onCasesChanged, onBack }) {
   const [caseTypeDicts, setCaseTypeDicts] = useState([]);
   const [templateName, setTemplateName] = useState("");
   const [templateContent, setTemplateContent] = useState("");
@@ -108,11 +124,13 @@ export default function StandaloneCaseGeneratorPage({ onCasesChanged }) {
   const [caseTypes, setCaseTypes] = useState([]);
   const [knowledgeBases, setKnowledgeBases] = useState([]);
   const [kbDropdownOpen, setKbDropdownOpen] = useState(false);
+  const [imageItems, setImageItems] = useState([]);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const fileInputRef = useRef(null);
 
   const caseTypeOptions = useMemo(
     () => (caseTypeDicts.length ? caseTypeDicts : DEFAULT_CASE_TYPE_OPTIONS),
@@ -143,7 +161,23 @@ export default function StandaloneCaseGeneratorPage({ onCasesChanged }) {
     };
   }, []);
 
-  const knowledgeBaseLabel = knowledgeBases.length ? knowledgeBases.join("?") : TEXT.noKnowledgeBase;
+  useEffect(() => {
+    async function handlePaste(event) {
+      const items = Array.from(event.clipboardData?.items || []);
+      const imageFiles = items
+        .filter((item) => item.type.startsWith("image/"))
+        .map((item) => item.getAsFile())
+        .filter(Boolean);
+      if (!imageFiles.length) return;
+      event.preventDefault();
+      await appendImages(imageFiles);
+    }
+
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [imageItems.length]);
+
+  const knowledgeBaseLabel = knowledgeBases.length ? knowledgeBases.join("\u3001") : TEXT.noKnowledgeBase;
 
   function toggleCaseType(key) {
     setCaseTypes((prev) =>
@@ -155,6 +189,31 @@ export default function StandaloneCaseGeneratorPage({ onCasesChanged }) {
     setKnowledgeBases((prev) =>
       prev.includes(item) ? prev.filter((entry) => entry !== item) : [...prev, item]
     );
+  }
+
+  async function appendImages(files) {
+    const validFiles = Array.from(files || []).filter((file) => file && String(file.type || "").startsWith("image/"));
+    if (!validFiles.length) {
+      setError(TEXT.imageTypeError);
+      return;
+    }
+    if (imageItems.length + validFiles.length > MAX_IMAGES) {
+      setError(TEXT.imageLimitError);
+      return;
+    }
+    setError("");
+    const nextItems = await Promise.all(
+      validFiles.map(async (file, index) => ({
+        id: `img-${Date.now()}-${index}-${Math.random().toString(16).slice(2, 8)}`,
+        name: file.name || `image-${index + 1}.png`,
+        dataUrl: await fileToDataUrl(file),
+      }))
+    );
+    setImageItems((prev) => [...prev, ...nextItems]);
+  }
+
+  function removeImage(id) {
+    setImageItems((prev) => prev.filter((item) => item.id !== id));
   }
 
   function addCase() {
@@ -194,6 +253,7 @@ export default function StandaloneCaseGeneratorPage({ onCasesChanged }) {
         prompt,
         case_types: caseTypes,
         knowledge_bases: knowledgeBases,
+        image_data_urls: imageItems.map((item) => item.dataUrl),
         use_knowledge_base: knowledgeBases.length > 0,
       });
       setRows(
@@ -250,9 +310,14 @@ export default function StandaloneCaseGeneratorPage({ onCasesChanged }) {
   return (
     <section className="panel case-generator-page">
       <div className="case-stage-head standalone-generator-head">
-        <div>
-          <h3>{TEXT.title}</h3>
-          <p>{TEXT.subtitle}</p>
+        <div className="standalone-generator-head-left">
+          <button type="button" className="back-link standalone-generator-back" onClick={onBack}>
+            {"\u2190 \u8fd4\u56de"}
+          </button>
+          <div>
+            <h3>{TEXT.title}</h3>
+            <p>{TEXT.subtitle}</p>
+          </div>
         </div>
       </div>
 
@@ -307,10 +372,10 @@ export default function StandaloneCaseGeneratorPage({ onCasesChanged }) {
                         role="button"
                         tabIndex={0}
                       >
-                        ?
+                        {"\u00d7"}
                       </span>
                     )}
-                    <span className="case-kb-dropdown-arrow">{kbDropdownOpen ? "?" : "?"}</span>
+                    <span className="case-kb-dropdown-arrow">{kbDropdownOpen ? "\u25b2" : "\u25bc"}</span>
                   </span>
                 </button>
                 {kbDropdownOpen && (
@@ -336,21 +401,81 @@ export default function StandaloneCaseGeneratorPage({ onCasesChanged }) {
             </div>
           </div>
 
-          <label className="case-stage-label">{TEXT.promptLabel}</label>
-          <textarea
-            className="case-stage-prompt"
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            placeholder={TEXT.promptPlaceholder}
-            readOnly={loading || saving}
-          />
+          <div className="case-generation-row case-composer-row">
+            <label className="case-stage-label">{TEXT.composerLabel}</label>
+            <div className="case-composer-wrap">
+              <div
+                className={imageItems.length ? "case-composer has-images" : "case-composer"}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={async (event) => {
+                  event.preventDefault();
+                  await appendImages(event.dataTransfer?.files || []);
+                }}
+              >
+                {imageItems.length > 0 && (
+                  <div className="case-composer-images">
+                    {imageItems.map((item) => (
+                      <div key={item.id} className="case-image-card composer-card">
+                        <img src={item.dataUrl} alt={item.name} />
+                        <button
+                          type="button"
+                          className="case-image-remove"
+                          onClick={() => removeImage(item.id)}
+                          disabled={loading || saving}
+                          aria-label={TEXT.delete}
+                        >?</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <textarea
+                  className="case-composer-input"
+                  value={prompt}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  placeholder={TEXT.promptPlaceholder}
+                  readOnly={loading || saving}
+                />
+
+                <div className="case-composer-footer">
+                  <button
+                    type="button"
+                    className="case-image-add composer-add"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={loading || saving}
+                    aria-label={TEXT.screenshotHint}
+                  >
+                    <span>{TEXT.addImage}</span>
+                  </button>
+                  <div className="case-composer-hint">{TEXT.screenshotHint}</div>
+                  <button
+                    type="button"
+                    className="case-composer-send"
+                    onClick={generateCases}
+                    disabled={loading || saving}
+                    aria-label={TEXT.regenerate}
+                  >?</button>
+                </div>
+
+                <input
+                  ref={fileInputRef}
+                  className="hidden-input"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={async (event) => {
+                    await appendImages(event.target.files || []);
+                    event.target.value = "";
+                  }}
+                />
+              </div>
+              <div className="case-image-subtip">{TEXT.screenshotSubHint}</div>
+            </div>
+          </div>
 
           <div className="case-generation-actions">
             <button type="button" className="btn ghost" onClick={addCase} disabled={loading || saving}>
               {TEXT.addCase}
-            </button>
-            <button type="button" className="btn ghost" onClick={generateCases} disabled={loading || saving}>
-              {loading ? TEXT.generating : TEXT.regenerate}
             </button>
             <button type="button" className="btn action" onClick={saveCases} disabled={loading || saving}>
               {saving ? TEXT.saving : TEXT.save}
@@ -461,20 +586,10 @@ export default function StandaloneCaseGeneratorPage({ onCasesChanged }) {
                     </td>
                     <td>
                       <div className="case-row-actions">
-                        <button
-                          type="button"
-                          className="link"
-                          onClick={() => duplicateCase(index)}
-                          disabled={loading || saving}
-                        >
+                        <button type="button" className="link" onClick={() => duplicateCase(index)} disabled={loading || saving}>
                           {TEXT.copy}
                         </button>
-                        <button
-                          type="button"
-                          className="link link-danger"
-                          onClick={() => deleteCase(index)}
-                          disabled={loading || saving}
-                        >
+                        <button type="button" className="link link-danger" onClick={() => deleteCase(index)} disabled={loading || saving}>
                           {TEXT.delete}
                         </button>
                       </div>
@@ -487,10 +602,11 @@ export default function StandaloneCaseGeneratorPage({ onCasesChanged }) {
         </div>
 
         <label className="case-stage-label">
-          {`${TEXT.templateLabel}${templateName ? `?${templateName}?` : ""}`}
+          {`${TEXT.templateLabel}${templateName ? `\uff08${templateName}\uff09` : ""}`}
         </label>
         <textarea className="case-stage-template" value={templateContent} readOnly />
       </div>
     </section>
   );
 }
+

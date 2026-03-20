@@ -138,7 +138,7 @@ async def call_chat_completion(
     api_url: str,
     api_key: str,
     model_name: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     temperature: float = 0.2,
     max_tokens: int = 1200,
     timeout: float = 90.0,

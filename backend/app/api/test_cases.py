@@ -1,5 +1,6 @@
 import json
 import logging
+from typing import Any
 from copy import deepcopy
 
 from fastapi import APIRouter, HTTPException, Query
@@ -65,13 +66,29 @@ KNOWLEDGE_BASE_OPTIONS = [
     "缺陷案例知识库",
     "接口文档知识库",
 ]
+STANDALONE_TEST_CASE_PROMPT = {
+    "remark": "test-case-standalone:general",
+    "name": "\u6d4b\u8bd5\u7528\u4f8b-\u901a\u7528",
+    "description": "\u7528\u4e8e\u5728\u7528\u4f8b\u7ba1\u7406\u4e2d\u7ed3\u5408\u622a\u56fe\u3001\u8865\u5145\u8bf4\u660e\u548c\u6d4b\u8bd5\u7c7b\u578b\u76f4\u63a5\u751f\u6210\u7ed3\u6784\u5316\u6d4b\u8bd5\u7528\u4f8b\u3002",
+    "default_content": (
+        "\u4f60\u662f\u4e00\u4f4d\u8d44\u6df1\u6d4b\u8bd5\u5de5\u7a0b\u5e08\u3002\u8bf7\u57fa\u4e8e\u7528\u6237\u63d0\u4f9b\u7684\u9875\u9762\u622a\u56fe\u3001\u8865\u5145\u8bf4\u660e\u3001\u6d4b\u8bd5\u7c7b\u578b\u548c\u53ef\u9009\u77e5\u8bc6\u5e93\u4fe1\u606f\uff0c\u751f\u6210\u7ed3\u6784\u5316\u6d4b\u8bd5\u7528\u4f8b\u3002\n"
+        "\u8f93\u51fa\u8981\u6c42\uff1a\n"
+        "1. \u4f18\u5148\u8bc6\u522b\u9875\u9762\u4e2d\u7684\u6838\u5fc3\u6d41\u7a0b\u3001\u8f93\u5165\u9879\u3001\u72b6\u6001\u3001\u6309\u94ae\u3001\u63d0\u793a\u4fe1\u606f\u3001\u5217\u8868\u5b57\u6bb5\u548c\u6821\u9a8c\u89c4\u5219\u3002\n"
+        "2. \u7ed3\u5408\u7528\u6237\u8865\u5145\u7684\u4e1a\u52a1\u89c4\u5219\uff0c\u8986\u76d6\u4e3b\u6d41\u7a0b\u3001\u5f02\u5e38\u6d41\u7a0b\u3001\u8fb9\u754c\u6761\u4ef6\u3001\u6743\u9650\u5dee\u5f02\u548c\u9ad8\u98ce\u9669\u573a\u666f\u3002\n"
+        "3. \u6bcf\u6761\u7528\u4f8b\u90fd\u5fc5\u987b\u5305\u542b test_point\u3001title\u3001preconditions\u3001steps\u3001expected\u3001priority\u3001case_type\u3002\n"
+        "4. steps \u5fc5\u987b\u662f\u53ef\u6267\u884c\u52a8\u4f5c\uff0cexpected \u5fc5\u987b\u662f\u53ef\u9a8c\u8bc1\u7ed3\u679c\uff0c\u907f\u514d\u7b3c\u7edf\u63cf\u8ff0\u3002\n"
+        "5. case_type \u5fc5\u987b\u4ece\u7528\u6237\u9009\u62e9\u7684\u6d4b\u8bd5\u7c7b\u578b\u4e2d\u53d6\u503c\u3002"
+    ),
+}
+
 TEST_CASE_STAGE_PROMPTS = {
     "clarify": {
-        "name": "\u6d4b\u8bd5\u7528\u4f8b-\u9700\u6c42\u62c6\u89e3",
-        "title": "\u9700\u6c42\u62c6\u89e3",
-        "subtitle": "\u5148\u62c6\u6e05\u8fd9\u4e2a\u9700\u6c42\u5305\u542b\u54ea\u4e9b\u529f\u80fd\u70b9\u3001\u4e3b\u6d41\u7a0b\u548c\u5173\u952e\u5206\u652f\u3002",
-        "button_text": "\u751f\u6210\u9700\u6c42\u62c6\u89e3",
+        "name": "\u6d4b\u8bd5\u7528\u4f8b-\u9700\u6c42\u5206\u6790",
+        "title": "\u9700\u6c42\u5206\u6790",
+        "subtitle": "\u5148\u5206\u6790\u8fd9\u4e2a\u9700\u6c42\u5305\u542b\u54ea\u4e9b\u529f\u80fd\u70b9\u3001\u4e3b\u6d41\u7a0b\u548c\u5173\u952e\u5206\u652f\u3002",
+        "button_text": "\u751f\u6210\u9700\u6c42\u5206\u6790",
         "description": "\u7528\u4e8e\u5148\u8bc6\u522b\u9700\u6c42\u4e2d\u7684\u529f\u80fd\u70b9\u3001\u4e1a\u52a1\u6b65\u9aa4\u3001\u89d2\u8272\u548c\u8fb9\u754c\uff0c\u4e3a\u540e\u7eed\u6d4b\u8bd5\u70b9\u4e0e\u7528\u4f8b\u751f\u6210\u5efa\u7acb\u7ed3\u6784\u5316\u8f93\u5165\u3002",
+        "remark": "test-case-stage:clarify",
         "default_content": (
             "\u4f60\u662f\u4e00\u4f4d\u8d44\u6df1\u6d4b\u8bd5\u5206\u6790\u5e08\u3002\u8bf7\u57fa\u4e8e\u8f93\u5165\u7684\u9700\u6c42\u4fe1\u606f\u8f93\u51fa\u201c\u9700\u6c42\u62c6\u89e3\u201d\u7ed3\u679c\uff0c\u76ee\u6807\u662f\u5148\u660e\u786e\u8be5\u9700\u6c42\u5305\u542b\u591a\u5c11\u4e2a\u529f\u80fd\u70b9\uff0c\u4ee5\u53ca\u6bcf\u4e2a\u529f\u80fd\u70b9\u5bf9\u5e94\u7684\u4e3b\u6d41\u7a0b\u3001\u5173\u952e\u5206\u652f\u548c\u8fb9\u754c\u3002\n"
             "\u8f93\u51fa\u8981\u6c42\uff1a\n"
@@ -88,6 +105,7 @@ TEST_CASE_STAGE_PROMPTS = {
         "subtitle": "\u57fa\u4e8e\u9700\u6c42\u62c6\u89e3\u7ed3\u679c\uff0c\u628a\u6bcf\u4e2a\u529f\u80fd\u70b9\u5c55\u5f00\u4e3a\u53ef\u9a8c\u8bc1\u7684\u6d4b\u8bd5\u70b9\u3002",
         "button_text": "\u751f\u6210\u6d4b\u8bd5\u70b9",
         "description": "\u7528\u4e8e\u6309\u6d4b\u8bd5\u8bbe\u8ba1\u89c6\u89d2\u68b3\u7406\u529f\u80fd\u70b9\u5bf9\u5e94\u7684\u4e3b\u6d41\u7a0b\u3001\u5206\u652f\u3001\u8fb9\u754c\u3001\u5f02\u5e38\u548c\u975e\u529f\u80fd\u6d4b\u8bd5\u70b9\u3002",
+        "remark": "test-case-stage:test_points",
         "default_content": (
             "\u4f60\u662f\u4e00\u4f4d\u8d44\u6df1\u6d4b\u8bd5\u8bbe\u8ba1\u4e13\u5bb6\u3002\u8bf7\u57fa\u4e8e\u9700\u6c42\u6b63\u6587\u4ee5\u53ca\u524d\u5e8f\u9636\u6bb5\u7684\u9700\u6c42\u62c6\u89e3\u7ed3\u679c\uff0c\u8f93\u51fa\u201c\u6d4b\u8bd5\u70b9\u68b3\u7406\u201d\u7ed3\u679c\u3002\n"
             "\u8f93\u51fa\u8981\u6c42\uff1a\n"
@@ -104,6 +122,7 @@ TEST_CASE_STAGE_PROMPTS = {
         "subtitle": "\u57fa\u4e8e\u9700\u6c42\u62c6\u89e3\u548c\u6d4b\u8bd5\u70b9\u68b3\u7406\u7ed3\u679c\u4ea7\u51fa\u7ed3\u6784\u5316\u6d4b\u8bd5\u7528\u4f8b\u3002",
         "button_text": "\u751f\u6210\u6d4b\u8bd5\u7528\u4f8b",
         "description": "\u7528\u4e8e\u751f\u6210\u53ef\u6267\u884c\u3001\u53ef\u7f16\u8f91\u3001\u53ef\u76f4\u63a5\u5165\u5e93\u7684\u7ed3\u6784\u5316\u6d4b\u8bd5\u7528\u4f8b\u3002",
+        "remark": "test-case-stage:cases",
         "default_content": (
             "\u4f60\u662f\u4e00\u4f4d\u8d44\u6df1\u6d4b\u8bd5\u5de5\u7a0b\u5e08\u3002\u8bf7\u57fa\u4e8e\u9700\u6c42\u6b63\u6587\u53ca\u524d\u5e8f\u9636\u6bb5\u7ed3\u679c\uff0c\u751f\u6210\u7ed3\u6784\u5316\u6d4b\u8bd5\u7528\u4f8b\u3002\n"
             "\u8f93\u51fa\u8981\u6c42\uff1a\n"
@@ -172,6 +191,7 @@ class StandaloneCaseGeneratePayload(BaseModel):
     prompt: str = ""
     case_types: list[str] = Field(default_factory=list)
     knowledge_bases: list[str] = Field(default_factory=list)
+    image_data_urls: list[str] = Field(default_factory=list)
     use_knowledge_base: bool = False
 
 
@@ -189,15 +209,22 @@ class TestCaseModuleIn(BaseModel):
     parent_id: str = ""
 
 
-def _find_stage_prompt_template(stage_key: str) -> dict:
-    stage_meta = TEST_CASE_STAGE_PROMPTS[stage_key]
+def _build_prompt_template(name: str, description: str, default_content: str, remark: str = "") -> dict:
     candidates = [
         item
         for item in db.prompt_templates.values()
         if item.get("enabled")
         and item.get("prompt_type") == TEST_CASE_PROMPT_TYPE
-        and item.get("name") == stage_meta["name"]
+        and ((remark and item.get("remark") == remark) or (not remark and item.get("name") == name))
     ]
+    if not candidates and remark:
+        candidates = [
+            item
+            for item in db.prompt_templates.values()
+            if item.get("enabled")
+            and item.get("prompt_type") == TEST_CASE_PROMPT_TYPE
+            and item.get("name") == name
+        ]
     if candidates:
         candidates.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
         template = db.clone(candidates[0])
@@ -206,13 +233,27 @@ def _find_stage_prompt_template(stage_key: str) -> dict:
     return {
         "id": "",
         "prompt_type": TEST_CASE_PROMPT_TYPE,
-        "name": stage_meta["name"],
-        "description": stage_meta["description"],
-        "content": _normalize_prompt_text(stage_meta["default_content"]),
+        "name": name,
+        "description": description,
+        "content": _normalize_prompt_text(default_content),
         "remark": "system-default",
         "enabled": True,
         "is_default": False,
     }
+
+
+def _find_stage_prompt_template(stage_key: str) -> dict:
+    stage_meta = TEST_CASE_STAGE_PROMPTS[stage_key]
+    return _build_prompt_template(stage_meta["name"], stage_meta["description"], stage_meta["default_content"], stage_meta.get("remark", ""))
+
+
+def _find_standalone_prompt_template() -> dict:
+    return _build_prompt_template(
+        STANDALONE_TEST_CASE_PROMPT["name"],
+        STANDALONE_TEST_CASE_PROMPT["description"],
+        STANDALONE_TEST_CASE_PROMPT["default_content"],
+        STANDALONE_TEST_CASE_PROMPT.get("remark", ""),
+    )
 
 
 def _resolve_requirement_id(requirement_id: str) -> str:
@@ -721,10 +762,11 @@ async def _generate_standalone_cases(
     prompt: str,
     case_types: list[str] | None = None,
     knowledge_bases: list[str] | None = None,
+    image_data_urls: list[str] | None = None,
     use_knowledge_base: bool = False,
 ) -> tuple[str, list[dict], dict]:
     llm_config = get_active_llm_config()
-    stage_prompt_template = _find_stage_prompt_template("cases")
+    stage_prompt_template = _find_standalone_prompt_template()
     normalized_prompt = _normalize_prompt_text(prompt)
     normalized_case_types = [
         _normalize_case_type_key(item)
@@ -732,6 +774,7 @@ async def _generate_standalone_cases(
         if _normalize_case_type_key(item)
     ]
     normalized_knowledge_bases = [str(item).strip() for item in (knowledge_bases or []) if str(item).strip()]
+    normalized_images = [str(item).strip() for item in (image_data_urls or []) if str(item).strip()]
 
     prompt_sections = [
         "Generate structured test cases based on the following information.",
@@ -742,9 +785,15 @@ async def _generate_standalone_cases(
         f"Case types: {', '.join(normalized_case_types) if normalized_case_types else 'functional'}",
         f"Use knowledge base: {'yes' if use_knowledge_base else 'no'}",
         f"Knowledge bases: {', '.join(normalized_knowledge_bases) if normalized_knowledge_bases else 'None'}",
+        f"Attached screenshots: {len(normalized_images)}",
+        'Read the screenshots carefully and extract visible UI, fields, states, data patterns, actions, and validations before producing cases.',
         'Return JSON only in the shape {"content": string, "cases": array}. Each case must include test_point, title, preconditions, steps, expected, priority, case_type.',
     ]
     user_prompt = "\n".join(item for item in prompt_sections if item)
+
+    user_content: list[dict[str, Any]] = [{"type": "text", "text": user_prompt}]
+    for image_url in normalized_images:
+        user_content.append({"type": "image_url", "image_url": {"url": image_url}})
 
     try:
         completion = await call_chat_completion(
@@ -754,9 +803,9 @@ async def _generate_standalone_cases(
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a senior QA engineer. Return structured test cases in JSON only.",
+                    "content": "You are a senior QA engineer. Read the provided text and screenshots, then return structured test cases in JSON only.",
                 },
-                {"role": "user", "content": user_prompt},
+                {"role": "user", "content": user_content},
             ],
             temperature=0.2,
             max_tokens=3600,
@@ -781,11 +830,15 @@ async def _generate_standalone_cases(
             case_types=normalized_case_types,
             knowledge_bases=normalized_knowledge_bases,
             use_knowledge_base=use_knowledge_base,
+            image_count=len(normalized_images),
         )
+        fallback_prompt = normalized_prompt
+        if normalized_images:
+            fallback_prompt = (fallback_prompt + "\n" if fallback_prompt else "") + f"Attached screenshots: {len(normalized_images)}"
         fallback_content, fallback_cases = _fallback_stage_result(
             "cases",
-            {"title": "Standalone case generation", "summary": normalized_prompt},
-            normalized_prompt,
+            {"title": "Standalone case generation", "summary": fallback_prompt},
+            fallback_prompt,
             {"stages": []},
             case_types=normalized_case_types,
             knowledge_bases=normalized_knowledge_bases,
@@ -863,7 +916,7 @@ def _sync_generated_cases(requirement_id: str, generated_cases: list[dict]) -> N
 
 @router.get("/generator/config")
 async def get_standalone_case_generator_config() -> dict:
-    prompt_template = _find_stage_prompt_template("cases")
+    prompt_template = _find_standalone_prompt_template()
     return {
         "template_name": prompt_template.get("name", ""),
         "template_content": prompt_template.get("content", ""),
@@ -876,6 +929,7 @@ async def generate_standalone_case_generator(payload: StandaloneCaseGeneratePayl
         prompt=payload.prompt,
         case_types=payload.case_types,
         knowledge_bases=payload.knowledge_bases,
+        image_data_urls=payload.image_data_urls,
         use_knowledge_base=payload.use_knowledge_base,
     )
     return {

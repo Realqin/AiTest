@@ -9,12 +9,6 @@ import {
 
 const PROMPT_TYPE_OPTIONS = ["通用对话", "需求评审", "测试用例", "缺陷分析"];
 
-const PROMPT_NAME_OPTIONS = {
-  "\u901a\u7528\u5bf9\u8bdd": ["\u9ed8\u8ba4\u6d4b\u8bd5\u52a9\u624b"],
-  "\u9700\u6c42\u8bc4\u5ba1": ["\u53ef\u6d4b\u6027\u5206\u6790", "\u53ef\u884c\u6027\u5206\u6790", "\u903b\u8f91\u5206\u6790", "\u6e05\u6670\u5ea6\u5206\u6790"],
-  "\u6d4b\u8bd5\u7528\u4f8b": ["\u6d4b\u8bd5\u7528\u4f8b-\u9700\u6c42\u62c6\u89e3", "\u6d4b\u8bd5\u7528\u4f8b-\u6d4b\u8bd5\u70b9\u68b3\u7406", "\u6d4b\u8bd5\u7528\u4f8b-\u751f\u6210\u7528\u4f8b"],
-  "\u7f3a\u9677\u5206\u6790": ["\u7f3a\u9677\u5206\u6790-\u6839\u56e0\u5b9a\u4f4d", "\u7f3a\u9677\u5206\u6790-\u4fee\u590d\u5efa\u8bae"],
-};
 
 const RESPONSE_TYPE_PRESETS = [
   {
@@ -51,13 +45,14 @@ const RESPONSE_TYPE_PRESETS = [
 
 const EMPTY_FORM = {
   prompt_type: PROMPT_TYPE_OPTIONS[0],
-  name: PROMPT_NAME_OPTIONS[PROMPT_TYPE_OPTIONS[0]][0],
+  name: "",
   description: "",
   base_content: "",
   response_type: "",
   response_format: "",
   enabled: true,
   is_default: false,
+  is_preset: false,
 };
 
 function shortenText(value, limit = 34) {
@@ -69,10 +64,6 @@ function getResponseTypeLabel(value) {
   return RESPONSE_TYPE_PRESETS.find((item) => item.value === value)?.label || value || "-";
 }
 
-function ensureOption(options, value) {
-  if (!value) return options;
-  return options.includes(value) ? options : [...options, value];
-}
 
 export default function PromptManagementPage() {
   const [items, setItems] = useState([]);
@@ -86,10 +77,6 @@ export default function PromptManagementPage() {
     [editingItem],
   );
 
-  const nameOptions = useMemo(
-    () => ensureOption(PROMPT_NAME_OPTIONS[form.prompt_type] || [], form.name),
-    [form.prompt_type, form.name],
-  );
 
   async function loadItems() {
     try {
@@ -130,6 +117,7 @@ export default function PromptManagementPage() {
       response_format: item.response_format || presetFormat,
       enabled: Boolean(item.enabled),
       is_default: Boolean(item.is_default),
+      is_preset: Boolean(item.is_preset),
     });
     setShowModal(true);
   }
@@ -144,11 +132,9 @@ export default function PromptManagementPage() {
   }
 
   function updatePromptType(nextType) {
-    const defaultName = (PROMPT_NAME_OPTIONS[nextType] || [])[0] || "";
     setForm((prev) => ({
       ...prev,
       prompt_type: nextType,
-      name: defaultName,
     }));
   }
 
@@ -165,6 +151,7 @@ export default function PromptManagementPage() {
         remark: editingItem?.remark || "",
         enabled: form.enabled,
         is_default: form.is_default,
+        is_preset: editingItem?.is_preset || false,
       };
       if (editingItem) {
         await updatePromptTemplate(editingItem.id, payload);
@@ -187,6 +174,9 @@ export default function PromptManagementPage() {
       setError(e.message || "删除提示词失败");
     }
   }
+
+  const isPreset = Boolean(form.is_preset);
+  const isPresetJson = isPreset && ["json-object", "json-array"].includes(form.response_type);
 
   async function handleToggle(item) {
     try {
@@ -285,11 +275,12 @@ export default function PromptManagementPage() {
                   <span className="required">*</span>
                   <span>提示词名称</span>
                 </label>
-                <select value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}>
-                  {nameOptions.map((item) => (
-                    <option key={item} value={item}>{item}</option>
-                  ))}
-                </select>
+                <input
+                  value={form.name}
+                  onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+                  placeholder="请输入提示词名称"
+                disabled={isPreset}
+                />
               </div>
 
               <label>描述</label>
@@ -309,7 +300,7 @@ export default function PromptManagementPage() {
                 <label className="prompt-inline-label">
                   <span>返回类型</span>
                 </label>
-                <select value={form.response_type} onChange={(e) => updateResponseType(e.target.value)}>
+                <select value={form.response_type} onChange={(e) => updateResponseType(e.target.value)} disabled={isPreset}>
                   {RESPONSE_TYPE_PRESETS.map((item) => (
                     <option key={item.value} value={item.value}>{item.label}</option>
                   ))}
@@ -322,9 +313,11 @@ export default function PromptManagementPage() {
                   rows={6}
                   value={form.response_format}
                   onChange={(e) => setForm((prev) => ({ ...prev, response_format: e.target.value }))}
+                  disabled={isPresetJson}
                 />
                 <div className="text-counter">{`${form.response_format.length}/10000`}</div>
               </div>
+              {isPresetJson && <div className="form-tip">预制项且返回类型为 JSON 时，返回格式也不支持调整。</div>}
             </div>
             <div className="modal-footer">
               <button className="btn ghost" onClick={closeModal}>取消</button>

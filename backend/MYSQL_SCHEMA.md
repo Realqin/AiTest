@@ -172,6 +172,7 @@ Prompt management table. Frequently used admin fields are explicitly indexed.
 | `remark` | `VARCHAR(200)` | Short note |
 | `enabled` | `TINYINT(1)` | Enable flag, indexed |
 | `is_default` | `TINYINT(1)` | Default flag, indexed |
+| `is_preset` | `TINYINT(1)` | Preset flag, indexed |
 | `created_at` | `DATETIME` | Record creation time |
 | `updated_at` | `DATETIME` | Record update time |
 | `extra_data` | `JSON` | Extension fields |

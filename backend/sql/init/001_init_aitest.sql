@@ -121,6 +121,7 @@ CREATE TABLE IF NOT EXISTS prompt_templates (
   remark VARCHAR(200) NOT NULL DEFAULT '',
   enabled TINYINT(1) NOT NULL DEFAULT 1,
   is_default TINYINT(1) NOT NULL DEFAULT 0,
+  is_preset TINYINT(1) NOT NULL DEFAULT 0,
   created_at DATETIME NULL,
   updated_at DATETIME NULL,
   extra_data JSON NOT NULL,
