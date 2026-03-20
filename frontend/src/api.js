@@ -15,6 +15,11 @@ export async function getHealth() {
   return request("/health");
 }
 
+export async function getDictionaries(group = "") {
+  const query = group ? `?group=${encodeURIComponent(group)}` : "";
+  return request(`/api/dictionaries${query}`);
+}
+
 export async function getProjects(params = {}) {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
@@ -121,9 +126,19 @@ export async function getRequirementReviews(requirementId) {
   return request(`/api/ai/reviews/by-requirement/${requirementId}`);
 }
 
-export async function getTestCases(requirementId = "") {
-  const query = requirementId ? `?requirement_id=${encodeURIComponent(requirementId)}` : "";
+export async function getTestCases(params = {}) {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      search.set(key, String(value));
+    }
+  });
+  const query = search.toString() ? `?${search.toString()}` : "";
   return request(`/api/test-cases${query}`);
+}
+
+export async function getTestCaseSidebar() {
+  return request("/api/test-cases/sidebar");
 }
 
 export async function createTestCase(payload) {
@@ -212,6 +227,18 @@ export async function confirmTestCaseWorkflowStage(requirementId, payload) {
 
 export async function rollbackTestCaseWorkflowStage(requirementId, payload) {
   return request(`/api/test-cases/workflow/${requirementId}/rollback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getStandaloneCaseGeneratorConfig() {
+  return request("/api/test-cases/generator/config");
+}
+
+export async function generateStandaloneCaseGenerator(payload) {
+  return request("/api/test-cases/generator/generate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),

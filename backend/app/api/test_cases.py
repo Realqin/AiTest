@@ -1,7 +1,8 @@
 import json
+import logging
 from copy import deepcopy
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.core.llm_client import (
@@ -13,6 +14,34 @@ from app.store.memory_db import db, now_iso
 
 
 router = APIRouter()
+logger = logging.getLogger("aitest.test_case_workflow")
+
+
+def _log_workflow_event(event: str, **payload: object) -> None:
+    logger.info("%s %s", event, json.dumps(payload, ensure_ascii=False, default=str))
+
+
+def _normalize_prompt_text(value: str) -> str:
+    text = str(value or "")
+    if "\\" not in text:
+        return text
+    return (
+        text.replace("\\r\\n", "\n")
+        .replace("\\n", "\n")
+        .replace("\\t", "\t")
+        .replace('\\"', '"')
+        .replace("\\'", "'")
+    )
+
+
+def _get_dictionary_items(group: str, fallback: list[dict] | list[str]) -> list[dict]:
+    items = [item for item in db.dictionaries.values() if item.get("enabled", True) and item.get("group") == group]
+    items.sort(key=lambda item: (item.get("sort_order", 0), item.get("created_at", ""), item.get("id", "")))
+    if items:
+        return [db.clone(item) for item in items]
+    if fallback and isinstance(fallback[0], str):
+        return [{"key": item, "value": item} for item in fallback]
+    return [db.clone(item) for item in fallback]
 
 TEST_CASE_PROMPT_TYPE = "测试用例"
 CASE_TYPE_OPTIONS = [
@@ -24,6 +53,12 @@ CASE_TYPE_OPTIONS = [
     "安全测试",
     "兼容性测试",
 ]
+CASE_PRIORITY_OPTIONS = [
+    {"key": "P0", "value": "高级"},
+    {"key": "P1", "value": "中级"},
+    {"key": "P2", "value": "低级"},
+    {"key": "P3", "value": "最低级"},
+]
 KNOWLEDGE_BASE_OPTIONS = [
     "需求文档知识库",
     "历史用例知识库",
@@ -32,67 +67,51 @@ KNOWLEDGE_BASE_OPTIONS = [
 ]
 TEST_CASE_STAGE_PROMPTS = {
     "clarify": {
-        "name": "测试用例-需求澄清",
-        "title": "需求澄清",
-        "subtitle": "先澄清模型对需求的理解、风险与待确认问题。",
-        "button_text": "生成需求澄清",
-        "description": "用于从需求文档中提炼测试前必须澄清的问题、范围和风险。",
+        "name": "\u6d4b\u8bd5\u7528\u4f8b-\u9700\u6c42\u62c6\u89e3",
+        "title": "\u9700\u6c42\u62c6\u89e3",
+        "subtitle": "\u5148\u62c6\u6e05\u8fd9\u4e2a\u9700\u6c42\u5305\u542b\u54ea\u4e9b\u529f\u80fd\u70b9\u3001\u4e3b\u6d41\u7a0b\u548c\u5173\u952e\u5206\u652f\u3002",
+        "button_text": "\u751f\u6210\u9700\u6c42\u62c6\u89e3",
+        "description": "\u7528\u4e8e\u5148\u8bc6\u522b\u9700\u6c42\u4e2d\u7684\u529f\u80fd\u70b9\u3001\u4e1a\u52a1\u6b65\u9aa4\u3001\u89d2\u8272\u548c\u8fb9\u754c\uff0c\u4e3a\u540e\u7eed\u6d4b\u8bd5\u70b9\u4e0e\u7528\u4f8b\u751f\u6210\u5efa\u7acb\u7ed3\u6784\u5316\u8f93\u5165\u3002",
         "default_content": (
-            "你是一位资深测试分析师。请基于输入的需求信息输出“需求澄清”结果，帮助测试人员在编写测试点和测试用例前完成信息补齐。\n"
-            "输出要求：\n"
-            "1. 先给出对需求目标、核心流程、关键角色的理解。\n"
-            "2. 列出阻碍测试设计的关键信息缺口，优先关注业务规则、输入输出、异常处理、权限、状态流转、依赖系统、验收标准。\n"
-            "3. 给出建议向产品或研发确认的问题清单，问题要具体、可回答。\n"
-            "4. 给出主要测试风险和可能造成的影响。\n"
-            "5. 使用清晰分段和项目符号，内容可直接给测试人员使用。"
+            "\u4f60\u662f\u4e00\u4f4d\u8d44\u6df1\u6d4b\u8bd5\u5206\u6790\u5e08\u3002\u8bf7\u57fa\u4e8e\u8f93\u5165\u7684\u9700\u6c42\u4fe1\u606f\u8f93\u51fa\u201c\u9700\u6c42\u62c6\u89e3\u201d\u7ed3\u679c\uff0c\u76ee\u6807\u662f\u5148\u660e\u786e\u8be5\u9700\u6c42\u5305\u542b\u591a\u5c11\u4e2a\u529f\u80fd\u70b9\uff0c\u4ee5\u53ca\u6bcf\u4e2a\u529f\u80fd\u70b9\u5bf9\u5e94\u7684\u4e3b\u6d41\u7a0b\u3001\u5173\u952e\u5206\u652f\u548c\u8fb9\u754c\u3002\n"
+            "\u8f93\u51fa\u8981\u6c42\uff1a\n"
+            "1. \u5148\u603b\u7ed3\u9700\u6c42\u76ee\u6807\uff0c\u5e76\u6982\u62ec\u8be5\u9700\u6c42\u8986\u76d6\u7684\u4e1a\u52a1\u8303\u56f4\u3002\n"
+            "2. \u62c6\u5206\u51fa\u660e\u786e\u7684\u529f\u80fd\u70b9\u6e05\u5355\uff0c\u7ed9\u6bcf\u4e2a\u529f\u80fd\u70b9\u7f16\u53f7\uff0c\u540d\u79f0\u8981\u5177\u4f53\uff0c\u907f\u514d\u8fc7\u4e8e\u7b3c\u7edf\u3002\n"
+            "3. \u5bf9\u6bcf\u4e2a\u529f\u80fd\u70b9\u8865\u5145\u8bf4\u660e\uff1a\u89e6\u53d1\u89d2\u8272\u3001\u524d\u7f6e\u6761\u4ef6\u3001\u6838\u5fc3\u64cd\u4f5c\u3001\u5173\u952e\u7ed3\u679c\u3002\n"
+            "4. \u5982\u5b58\u5728\u91cd\u8981\u5206\u652f\u3001\u5f02\u5e38\u5904\u7406\u3001\u6743\u9650\u5dee\u5f02\u3001\u72b6\u6001\u6d41\u8f6c\u6216\u5916\u90e8\u4f9d\u8d56\uff0c\u9700\u8981\u5728\u5bf9\u5e94\u529f\u80fd\u70b9\u4e0b\u5355\u72ec\u6807\u51fa\u3002\n"
+            "5. \u8f93\u51fa\u8981\u7ed3\u6784\u5316\uff0c\u4fbf\u4e8e\u540e\u7eed\u76f4\u63a5\u7ee7\u7eed\u751f\u6210\u6d4b\u8bd5\u70b9\u6216\u601d\u7ef4\u5bfc\u56fe\uff1b\u4e0d\u8981\u989d\u5916\u589e\u52a0\u201c\u9700\u6c42\u6f84\u6e05\u201d\u201c\u77e5\u8bc6\u70b9\u68b3\u7406\u201d\u7b49\u8282\u70b9\u524d\u7f00\u3002"
         ),
     },
     "test_points": {
-        "name": "测试用例-测试点梳理",
-        "title": "测试点梳理",
-        "subtitle": "把需求拆成可验证、可执行的测试点。",
-        "button_text": "生成测试点",
-        "description": "用于按测试设计视角梳理功能、边界、异常和兼容等测试点。",
+        "name": "\u6d4b\u8bd5\u7528\u4f8b-\u6d4b\u8bd5\u70b9\u68b3\u7406",
+        "title": "\u6d4b\u8bd5\u70b9\u68b3\u7406",
+        "subtitle": "\u57fa\u4e8e\u9700\u6c42\u62c6\u89e3\u7ed3\u679c\uff0c\u628a\u6bcf\u4e2a\u529f\u80fd\u70b9\u5c55\u5f00\u4e3a\u53ef\u9a8c\u8bc1\u7684\u6d4b\u8bd5\u70b9\u3002",
+        "button_text": "\u751f\u6210\u6d4b\u8bd5\u70b9",
+        "description": "\u7528\u4e8e\u6309\u6d4b\u8bd5\u8bbe\u8ba1\u89c6\u89d2\u68b3\u7406\u529f\u80fd\u70b9\u5bf9\u5e94\u7684\u4e3b\u6d41\u7a0b\u3001\u5206\u652f\u3001\u8fb9\u754c\u3001\u5f02\u5e38\u548c\u975e\u529f\u80fd\u6d4b\u8bd5\u70b9\u3002",
         "default_content": (
-            "你是一位资深测试设计专家。请基于需求正文以及前序阶段结论，输出“测试点梳理”结果。\n"
-            "输出要求：\n"
-            "1. 按模块或流程拆解测试点，优先覆盖主流程、分支流程、边界条件、异常处理、权限控制、数据校验、状态流转。\n"
-            "2. 明确每个测试点的验证目标，避免只写标题不写检查点。\n"
-            "3. 补充接口联动、数据一致性、兼容性、性能和稳定性等非功能测试点。\n"
-            "4. 对高风险测试点进行单独标记并说明原因。\n"
-            "5. 输出要结构化，便于后续直接转成测试用例。"
-        ),
-    },
-    "review": {
-        "name": "测试用例-审批确认",
-        "title": "审批确认",
-        "subtitle": "确认范围、优先级、通过标准与遗留风险。",
-        "button_text": "生成审批确认",
-        "description": "用于在测试点基础上形成提测前的确认清单、优先级和准出建议。",
-        "default_content": (
-            "你是一位测试负责人，请基于需求正文、需求澄清和测试点梳理结果，输出“审批确认”结论。\n"
-            "输出要求：\n"
-            "1. 明确本次测试范围、非测试范围和优先级建议。\n"
-            "2. 给出进入测试执行前需要确认的前置条件、测试数据准备、环境依赖、角色权限和联调条件。\n"
-            "3. 明确通过标准和验收口径，尤其是哪些结果可判定为通过、失败、阻塞。\n"
-            "4. 列出尚未解决但需要知会的遗留风险、假设条件和规避建议。\n"
-            "5. 内容适合评审和审批场景，语言简洁明确。"
+            "\u4f60\u662f\u4e00\u4f4d\u8d44\u6df1\u6d4b\u8bd5\u8bbe\u8ba1\u4e13\u5bb6\u3002\u8bf7\u57fa\u4e8e\u9700\u6c42\u6b63\u6587\u4ee5\u53ca\u524d\u5e8f\u9636\u6bb5\u7684\u9700\u6c42\u62c6\u89e3\u7ed3\u679c\uff0c\u8f93\u51fa\u201c\u6d4b\u8bd5\u70b9\u68b3\u7406\u201d\u7ed3\u679c\u3002\n"
+            "\u8f93\u51fa\u8981\u6c42\uff1a\n"
+            "1. \u6309\u529f\u80fd\u70b9\u5206\u7ec4\u68b3\u7406\u6d4b\u8bd5\u70b9\uff0c\u4f18\u5148\u8986\u76d6\u4e3b\u6d41\u7a0b\u3001\u5206\u652f\u6d41\u7a0b\u3001\u8fb9\u754c\u6761\u4ef6\u3001\u5f02\u5e38\u5904\u7406\u3001\u6743\u9650\u63a7\u5236\u3001\u6570\u636e\u6821\u9a8c\u548c\u72b6\u6001\u6d41\u8f6c\u3002\n"
+            "2. \u6bcf\u4e2a\u6d4b\u8bd5\u70b9\u90fd\u8981\u5199\u660e\u9a8c\u8bc1\u76ee\u6807\uff0c\u907f\u514d\u53ea\u5217\u6807\u9898\u3002\n"
+            "3. \u8865\u5145\u63a5\u53e3\u8054\u52a8\u3001\u6570\u636e\u4e00\u81f4\u6027\u3001\u517c\u5bb9\u6027\u3001\u6027\u80fd\u548c\u7a33\u5b9a\u6027\u7b49\u5fc5\u8981\u7684\u975e\u529f\u80fd\u6d4b\u8bd5\u70b9\u3002\n"
+            "4. \u5bf9\u9ad8\u98ce\u9669\u6d4b\u8bd5\u70b9\u8fdb\u884c\u5355\u72ec\u6807\u8bc6\uff0c\u5e76\u8bf4\u660e\u98ce\u9669\u539f\u56e0\u3002\n"
+            "5. \u8f93\u51fa\u8981\u7ed3\u6784\u5316\uff0c\u4fbf\u4e8e\u540e\u7eed\u76f4\u63a5\u8f6c\u6362\u6210\u6d4b\u8bd5\u7528\u4f8b\u6216\u601d\u7ef4\u5bfc\u56fe\uff1b\u4e0d\u8981\u989d\u5916\u589e\u52a0\u9636\u6bb5\u524d\u7f00\u8282\u70b9\u3002"
         ),
     },
     "cases": {
-        "name": "测试用例-生成用例",
-        "title": "生成用例",
-        "subtitle": "按确认结果产出结构化测试用例。",
-        "button_text": "生成测试用例",
-        "description": "用于生成可执行、可编辑、可直接入库的结构化测试用例。",
+        "name": "\u6d4b\u8bd5\u7528\u4f8b-\u751f\u6210\u7528\u4f8b",
+        "title": "\u751f\u6210\u7528\u4f8b",
+        "subtitle": "\u57fa\u4e8e\u9700\u6c42\u62c6\u89e3\u548c\u6d4b\u8bd5\u70b9\u68b3\u7406\u7ed3\u679c\u4ea7\u51fa\u7ed3\u6784\u5316\u6d4b\u8bd5\u7528\u4f8b\u3002",
+        "button_text": "\u751f\u6210\u6d4b\u8bd5\u7528\u4f8b",
+        "description": "\u7528\u4e8e\u751f\u6210\u53ef\u6267\u884c\u3001\u53ef\u7f16\u8f91\u3001\u53ef\u76f4\u63a5\u5165\u5e93\u7684\u7ed3\u6784\u5316\u6d4b\u8bd5\u7528\u4f8b\u3002",
         "default_content": (
-            "你是一位资深测试工程师。请基于需求正文及前序阶段结果，生成结构化测试用例。\n"
-            "输出要求：\n"
-            "1. 优先覆盖核心业务流、关键异常分支、边界场景、权限差异、状态流转和高风险点。\n"
-            "2. 每条用例都要包含 test_point、title、preconditions、steps、expected、priority、case_type。\n"
-            "3. steps 必须是可执行动作，expected 必须是可验证结果，禁止笼统描述。\n"
-            "4. priority 使用 P1/P2/P3，P1 表示核心高风险场景。\n"
-            "5. case_type 必须从用户选中的用例类型中选择。"
+            "\u4f60\u662f\u4e00\u4f4d\u8d44\u6df1\u6d4b\u8bd5\u5de5\u7a0b\u5e08\u3002\u8bf7\u57fa\u4e8e\u9700\u6c42\u6b63\u6587\u53ca\u524d\u5e8f\u9636\u6bb5\u7ed3\u679c\uff0c\u751f\u6210\u7ed3\u6784\u5316\u6d4b\u8bd5\u7528\u4f8b\u3002\n"
+            "\u8f93\u51fa\u8981\u6c42\uff1a\n"
+            "1. \u4f18\u5148\u8986\u76d6\u6838\u5fc3\u4e1a\u52a1\u6d41\u3001\u5173\u952e\u5f02\u5e38\u5206\u652f\u3001\u8fb9\u754c\u573a\u666f\u3001\u6743\u9650\u5dee\u5f02\u3001\u72b6\u6001\u6d41\u8f6c\u548c\u9ad8\u98ce\u9669\u70b9\u3002\n"
+            "2. \u6bcf\u6761\u7528\u4f8b\u90fd\u8981\u5305\u542b test_point\u3001title\u3001preconditions\u3001steps\u3001expected\u3001priority\u3001case_type\u3002\n"
+            "3. steps \u5fc5\u987b\u662f\u53ef\u6267\u884c\u52a8\u4f5c\uff0cexpected \u5fc5\u987b\u662f\u53ef\u9a8c\u8bc1\u7ed3\u679c\uff0c\u7981\u6b62\u7b3c\u7edf\u63cf\u8ff0\u3002\n"
+            "4. priority \u4f7f\u7528 P1/P2/P3\uff0cP1 \u8868\u793a\u6838\u5fc3\u9ad8\u98ce\u9669\u573a\u666f\u3002\n"
+            "5. case_type \u5fc5\u987b\u4ece\u7528\u6237\u9009\u4e2d\u7684\u7528\u4f8b\u7c7b\u578b\u4e2d\u9009\u62e9\u3002"
         ),
     },
 }
@@ -102,9 +121,23 @@ WORKFLOW_STAGES = [
 ]
 WORKFLOW_STAGE_MAP = {item["key"]: item for item in WORKFLOW_STAGES}
 
+CASE_TYPE_DICTIONARY_FALLBACK = [
+    {"key": "smoke", "value": "冒烟测试"},
+    {"key": "functional", "value": "功能测试"},
+    {"key": "boundary", "value": "边界测试"},
+    {"key": "exception", "value": "异常测试"},
+    {"key": "permission", "value": "权限测试"},
+    {"key": "security", "value": "安全测试"},
+    {"key": "compatibility", "value": "兼容性测试"},
+]
+
+CASE_TYPE_LABEL_TO_KEY = {item["value"]: item["key"] for item in CASE_TYPE_DICTIONARY_FALLBACK}
+CASE_TYPE_KEY_TO_LABEL = {item["key"]: item["value"] for item in CASE_TYPE_DICTIONARY_FALLBACK}
+
 
 class TestCaseIn(BaseModel):
     requirement_id: str = ""
+    module_id: str = ""
     title: str = Field(min_length=1, max_length=200)
     test_point: str = ""
     preconditions: list[str] = Field(default_factory=list)
@@ -112,7 +145,6 @@ class TestCaseIn(BaseModel):
     expected: list[str] = Field(default_factory=list)
     priority: str = "P2"
     case_type: str = ""
-    module: str = ""
     stage: str = ""
     review_status: str = "待审核"
     creator: str = "admin"
@@ -130,6 +162,13 @@ class WorkflowDraftPayload(BaseModel):
 
 class WorkflowGeneratePayload(BaseModel):
     stage_key: str
+    prompt: str = ""
+    case_types: list[str] = Field(default_factory=list)
+    knowledge_bases: list[str] = Field(default_factory=list)
+    use_knowledge_base: bool = False
+
+
+class StandaloneCaseGeneratePayload(BaseModel):
     prompt: str = ""
     case_types: list[str] = Field(default_factory=list)
     knowledge_bases: list[str] = Field(default_factory=list)
@@ -161,13 +200,15 @@ def _find_stage_prompt_template(stage_key: str) -> dict:
     ]
     if candidates:
         candidates.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
-        return candidates[0]
+        template = db.clone(candidates[0])
+        template["content"] = _normalize_prompt_text(template.get("content", ""))
+        return template
     return {
         "id": "",
         "prompt_type": TEST_CASE_PROMPT_TYPE,
         "name": stage_meta["name"],
         "description": stage_meta["description"],
-        "content": stage_meta["default_content"],
+        "content": _normalize_prompt_text(stage_meta["default_content"]),
         "remark": "system-default",
         "enabled": True,
         "is_default": False,
@@ -176,6 +217,133 @@ def _find_stage_prompt_template(stage_key: str) -> dict:
 
 def _resolve_requirement_id(requirement_id: str) -> str:
     return requirement_id or db.MANUAL_CASE_REQUIREMENT_ID
+
+
+def _normalize_case_type_key(case_type: str, available_items: list[dict] | None = None) -> str:
+    value = str(case_type or "").strip()
+    if not value:
+        return ""
+    options = available_items or _get_dictionary_items("case_type", CASE_TYPE_DICTIONARY_FALLBACK)
+    key_by_label = {
+        str(item.get("value", "")).strip(): str(item.get("key", "")).strip()
+        for item in options
+        if item.get("key")
+    }
+    valid_keys = {str(item.get("key", "")).strip() for item in options if item.get("key")}
+    if value in valid_keys:
+        return value
+    return key_by_label.get(value, CASE_TYPE_LABEL_TO_KEY.get(value, value))
+
+
+def _resolve_module(module_id: str | None) -> dict | None:
+    resolved_id = str(module_id or "").strip()
+    if not resolved_id:
+        return None
+    return db.test_case_modules.get(resolved_id)
+
+
+def _serialize_test_case(item: dict) -> dict:
+    case = db.clone(item)
+    module = _resolve_module(case.get("module_id"))
+    case["module_name"] = module.get("name", "") if module else ""
+    case_type = str(case.get("case_type", "")).strip()
+    case["case_type_label"] = CASE_TYPE_KEY_TO_LABEL.get(case_type, case_type)
+    return case
+
+
+def _case_type_labels(case_types: list[str]) -> list[str]:
+    return [CASE_TYPE_KEY_TO_LABEL.get(item, item) for item in case_types if item]
+
+
+def _build_case_sidebar_payload() -> dict:
+    all_cases = list(db.test_cases.values())
+    module_case_count = {}
+    requirement_case_count = {}
+    total_linked = 0
+
+    for item in all_cases:
+        module_id = str(item.get("module_id", "") or "")
+        if module_id:
+            module_case_count[module_id] = module_case_count.get(module_id, 0) + 1
+        requirement_id = str(item.get("requirement_id", "") or "")
+        if requirement_id and requirement_id != db.MANUAL_CASE_REQUIREMENT_ID:
+            requirement_case_count[requirement_id] = requirement_case_count.get(requirement_id, 0) + 1
+            total_linked += 1
+
+    module_nodes = {
+        item["id"]: {
+            "id": item["id"],
+            "name": item.get("name", ""),
+            "parent_id": item.get("parent_id", ""),
+            "sort_order": item.get("sort_order", 0),
+            "direct_count": module_case_count.get(item["id"], 0),
+            "count": module_case_count.get(item["id"], 0),
+            "children": [],
+        }
+        for item in db.test_case_modules.values()
+    }
+    module_roots = []
+    for node in module_nodes.values():
+        parent_id = node.get("parent_id", "")
+        if parent_id and parent_id in module_nodes:
+            module_nodes[parent_id]["children"].append(node)
+        else:
+            module_roots.append(node)
+
+    def finalize_module(node: dict) -> int:
+        node["children"].sort(key=lambda item: (item.get("sort_order", 0), item.get("name", ""), item.get("id", "")))
+        total = node.get("direct_count", 0)
+        for child in node["children"]:
+            total += finalize_module(child)
+        node["count"] = total
+        return total
+
+    for root in module_roots:
+        finalize_module(root)
+    module_roots.sort(key=lambda item: (item.get("sort_order", 0), item.get("name", ""), item.get("id", "")))
+
+    project_nodes = {}
+    for requirement in [item for item in db.requirements.values() if not item.get("hidden")]:
+        project_id = requirement.get("project_id") or f"unknown:{requirement.get('project', '')}"
+        project_name = requirement.get("project", "") or "未分组项目"
+        project_node = project_nodes.setdefault(
+            project_id,
+            {
+                "id": f"req-project:{project_id}",
+                "project_id": project_id,
+                "name": project_name,
+                "count": 0,
+                "children": [],
+            },
+        )
+        count = requirement_case_count.get(requirement["id"], 0)
+        project_node["children"].append(
+            {
+                "id": f"req:{requirement['id']}",
+                "requirement_id": requirement["id"],
+                "name": requirement.get("title") or requirement.get("summary") or requirement["id"],
+                "count": count,
+                "children": [],
+            }
+        )
+        project_node["count"] += count
+
+    requirement_projects = list(project_nodes.values())
+    requirement_projects.sort(key=lambda item: (item.get("name", ""), item.get("project_id", "")))
+    for item in requirement_projects:
+        item["children"].sort(key=lambda child: (child.get("name", ""), child.get("requirement_id", "")))
+
+    return {
+        "all_count": len(all_cases),
+        "linked_count": total_linked,
+        "module_tree": module_roots,
+        "requirement_tree": {
+            "id": "requirement-root",
+            "name": "需求类",
+            "count": total_linked,
+            "children": requirement_projects,
+        },
+    }
 
 
 def _build_default_stage(stage_key: str) -> dict:
@@ -190,7 +358,7 @@ def _build_default_stage(stage_key: str) -> dict:
         "updated_at": now_iso(),
         "snapshots": [],
         "generated_cases": [],
-        "case_types": ["功能测试"] if stage_key == "cases" else [],
+        "case_types": ["functional"] if stage_key == "cases" else [],
         "knowledge_bases": [],
         "use_knowledge_base": False,
     }
@@ -212,7 +380,7 @@ def _normalize_case(case_item: dict, index: int, fallback_title: str, default_ca
     title = str(case_item.get("title", "")).strip() or f"{fallback_title}-用例{index}"
     test_point = str(case_item.get("test_point", "")).strip()
     priority = str(case_item.get("priority", "P2")).strip() or "P2"
-    case_type = str(case_item.get("case_type", default_case_type)).strip()
+    case_type = _normalize_case_type_key(case_item.get("case_type", default_case_type))
     preconditions = [str(item).strip() for item in case_item.get("preconditions", []) if str(item).strip()]
     steps = [str(item).strip() for item in case_item.get("steps", []) if str(item).strip()]
     expected = [str(item).strip() for item in case_item.get("expected", []) if str(item).strip()]
@@ -230,7 +398,8 @@ def _normalize_case(case_item: dict, index: int, fallback_title: str, default_ca
 def _normalize_workflow(requirement: dict) -> dict:
     raw = deepcopy(requirement.get("test_case_workflow") or {})
     workflow = _build_default_workflow(requirement["id"])
-    workflow["current_stage_index"] = min(max(int(raw.get("current_stage_index", 0) or 0), 0), len(WORKFLOW_STAGES) - 1)
+    raw_index = int(raw.get("current_stage_index", 0) or 0)
+    workflow["current_stage_index"] = min(max(raw_index, 0), len(WORKFLOW_STAGES) - 1)
     workflow["completed"] = bool(raw.get("completed", False))
     workflow["updated_at"] = raw.get("updated_at") or workflow["updated_at"]
 
@@ -245,13 +414,19 @@ def _normalize_workflow(requirement: dict) -> dict:
         current["updated_at"] = saved.get("updated_at") or current["updated_at"]
         current["snapshots"] = deepcopy(saved.get("snapshots", []))
         current["generated_cases"] = deepcopy(saved.get("generated_cases", []))
-        current["case_types"] = list(saved.get("case_types", current["case_types"]))
+        current["case_types"] = [
+            _normalize_case_type_key(item)
+            for item in list(saved.get("case_types", current["case_types"]))
+            if _normalize_case_type_key(item)
+        ]
         current["knowledge_bases"] = list(saved.get("knowledge_bases", []))
         current["use_knowledge_base"] = bool(saved.get("use_knowledge_base", False))
         stages.append(current)
-    workflow["stages"] = stages
-    return workflow
 
+    workflow["stages"] = stages
+    if workflow["current_stage_index"] >= len(stages):
+        workflow["current_stage_index"] = len(stages) - 1
+    return workflow
 
 def _stage_index(stage_key: str) -> int:
     if stage_key not in WORKFLOW_STAGE_MAP:
@@ -280,7 +455,16 @@ def _serialize_workflow(requirement: dict, workflow: dict) -> dict:
                 "button_text": WORKFLOW_STAGE_MAP[stage["key"]]["button_text"],
                 "template_name": prompt_template.get("name", ""),
                 "template_content": prompt_template.get("content", ""),
-                "case_type_options": CASE_TYPE_OPTIONS if stage["key"] == "cases" else [],
+                "case_type_options": (
+                    _get_dictionary_items("case_type", CASE_TYPE_DICTIONARY_FALLBACK)
+                    if stage["key"] == "cases"
+                    else []
+                ),
+                "priority_options": (
+                    _get_dictionary_items("case_priority", CASE_PRIORITY_OPTIONS)
+                    if stage["key"] == "cases"
+                    else []
+                ),
                 "knowledge_base_options": KNOWLEDGE_BASE_OPTIONS if stage["key"] == "cases" else [],
             }
         )
@@ -333,76 +517,68 @@ def _fallback_stage_result(
     knowledge_bases: list[str] | None = None,
     use_knowledge_base: bool = False,
 ) -> tuple[str, list[dict]]:
-    title = requirement.get("title", "当前需求")
+    title = requirement.get("title", "\u5f53\u524d\u9700\u6c42")
     summary = requirement.get("summary", requirement.get("body_text", "")[:120])
     if stage_key == "clarify":
         content = (
-            f"一、需求理解\n- 当前需求围绕“{title}”展开，需优先明确目标、主流程和验收边界。\n"
-            f"- 需求摘要：{summary}\n\n"
-            "二、待澄清问题\n"
-            "- 关键输入、输出及业务规则是否已经完整定义。\n"
-            "- 异常分支、权限差异、失败处理是否有明确约束。\n"
-            "- 验收口径是否可以直接支持测试通过/失败判定。\n\n"
-            "三、主要风险\n"
-            "- 若关键规则缺失，后续测试点和测试用例会出现覆盖不足或口径不一致。\n"
+            f"\u4e00\u3001\u9700\u6c42\u76ee\u6807\n- \u5f53\u524d\u9700\u6c42\u56f4\u7ed5\u201c{title}\u201d\u5c55\u5f00\uff0c\u9700\u5148\u8bc6\u522b\u5b8c\u6574\u529f\u80fd\u70b9\u540e\u518d\u7ee7\u7eed\u6d4b\u8bd5\u8bbe\u8ba1\u3002\n"
+            f"- \u9700\u6c42\u6458\u8981\uff1a{summary}\n\n"
+            "\u4e8c\u3001\u529f\u80fd\u70b9\u62c6\u89e3\n"
+            "- \u529f\u80fd\u70b91\uff1a\u4e3b\u6d41\u7a0b\u529f\u80fd\n"
+            "- \u529f\u80fd\u70b92\uff1a\u5173\u952e\u5206\u652f/\u5f02\u5e38\u5904\u7406\n"
+            "- \u529f\u80fd\u70b93\uff1a\u6743\u9650\u3001\u72b6\u6001\u6216\u5916\u90e8\u4f9d\u8d56\u76f8\u5173\u80fd\u529b\n\n"
+            "\u4e09\u3001\u62c6\u89e3\u5173\u6ce8\u9879\n"
+            "- \u6bcf\u4e2a\u529f\u80fd\u70b9\u9700\u8fdb\u4e00\u6b65\u660e\u786e\u89e6\u53d1\u89d2\u8272\u3001\u524d\u7f6e\u6761\u4ef6\u3001\u5173\u952e\u64cd\u4f5c\u548c\u9884\u671f\u7ed3\u679c\u3002\n"
+            "- \u9700\u8981\u989d\u5916\u5173\u6ce8\u8fb9\u754c\u6761\u4ef6\u3001\u5f02\u5e38\u5206\u652f\u3001\u72b6\u6001\u6d41\u8f6c\u548c\u5916\u90e8\u7cfb\u7edf\u4ea4\u4e92\u3002\n"
         )
         if prompt:
-            content += f"\n四、人工补充关注点\n- {prompt}\n"
+            content += f"\n\u56db\u3001\u4eba\u5de5\u8865\u5145\u5173\u6ce8\u70b9\n- {prompt}\n"
         return content, []
     if stage_key == "test_points":
         content = (
-            "一、核心测试点\n"
-            "- 主流程成功路径\n"
-            "- 关键字段校验与边界值\n"
-            "- 失败提示与异常恢复\n"
-            "- 权限/角色差异\n\n"
-            "二、补充测试点\n"
-            "- 外部系统或接口联动\n"
-            "- 数据一致性与状态流转\n"
-            "- 非功能项：性能、稳定性、兼容性\n"
+            "\u4e00\u3001\u6309\u529f\u80fd\u70b9\u68b3\u7406\u6d4b\u8bd5\u70b9\n"
+            "- \u529f\u80fd\u70b9\u4e3b\u6d41\u7a0b\u9a8c\u8bc1\n"
+            "- \u529f\u80fd\u70b9\u5206\u652f\u6d41\u7a0b\u9a8c\u8bc1\n"
+            "- \u8f93\u5165\u8f93\u51fa\u4e0e\u8fb9\u754c\u6821\u9a8c\n"
+            "- \u5f02\u5e38\u5904\u7406\u4e0e\u5931\u8d25\u63d0\u793a\n"
+            "- \u6743\u9650/\u89d2\u8272\u5dee\u5f02\n\n"
+            "\u4e8c\u3001\u8865\u5145\u6d4b\u8bd5\u70b9\n"
+            "- \u5916\u90e8\u7cfb\u7edf\u6216\u63a5\u53e3\u8054\u52a8\n"
+            "- \u6570\u636e\u4e00\u81f4\u6027\u4e0e\u72b6\u6001\u6d41\u8f6c\n"
+            "- \u975e\u529f\u80fd\u9879\uff1a\u6027\u80fd\u3001\u7a33\u5b9a\u6027\u3001\u517c\u5bb9\u6027\n"
         )
         if prompt:
-            content += f"\n三、额外关注\n- {prompt}\n"
-        return content, []
-    if stage_key == "review":
-        content = (
-            "一、审批确认结论\n"
-            "- 当前测试范围可继续推进，但建议先明确关键边界和通过标准。\n\n"
-            "二、待确认项\n"
-            "- 是否所有关键场景都具备明确可验证结果。\n"
-            "- 是否已有统一的前置数据准备方案。\n"
-            "- 是否需要补充高优先级风险场景。\n"
-        )
-        if prompt:
-            content += f"\n三、人工补充要求\n- {prompt}\n"
+            content += f"\n\u4e09\u3001\u989d\u5916\u5173\u6ce8\n- {prompt}\n"
         return content, []
 
-    resolved_case_types = case_types or ["功能测试"]
+    resolved_case_types = [_normalize_case_type_key(item) for item in (case_types or ["functional"]) if _normalize_case_type_key(item)]
+    if not resolved_case_types:
+        resolved_case_types = ["functional"]
     cases = [
         {
-            "title": f"{title}-主流程验证",
-            "test_point": "核心业务主流程",
-            "preconditions": ["准备满足前置条件的数据和账号"],
+            "title": f"{title}-\u4e3b\u6d41\u7a0b\u9a8c\u8bc1",
+            "test_point": "\u6838\u5fc3\u4e1a\u52a1\u4e3b\u6d41\u7a0b",
+            "preconditions": ["\u51c6\u5907\u6ee1\u8db3\u524d\u7f6e\u6761\u4ef6\u7684\u6570\u636e\u548c\u8d26\u53f7"],
             "priority": "P1",
-            "steps": ["准备测试数据", "执行主流程操作", "检查执行结果"],
-            "expected": ["页面或接口返回成功", "状态变更正确", "无异常提示"],
+            "steps": ["\u51c6\u5907\u6d4b\u8bd5\u6570\u636e", "\u6267\u884c\u4e3b\u6d41\u7a0b\u64cd\u4f5c", "\u68c0\u67e5\u6267\u884c\u7ed3\u679c"],
+            "expected": ["\u9875\u9762\u6216\u63a5\u53e3\u8fd4\u56de\u6210\u529f", "\u72b6\u6001\u53d8\u66f4\u6b63\u786e", "\u65e0\u5f02\u5e38\u63d0\u793a"],
             "case_type": resolved_case_types[0],
         },
         {
-            "title": f"{title}-异常路径验证",
-            "test_point": "异常输入与失败提示",
-            "preconditions": ["准备非法或缺失输入样例"],
+            "title": f"{title}-\u5f02\u5e38\u8def\u5f84\u9a8c\u8bc1",
+            "test_point": "\u5f02\u5e38\u8f93\u5165\u4e0e\u5931\u8d25\u63d0\u793a",
+            "preconditions": ["\u51c6\u5907\u975e\u6cd5\u6216\u7f3a\u5931\u8f93\u5165\u6837\u4f8b"],
             "priority": "P1",
-            "steps": ["构造非法或缺失输入", "执行操作", "观察错误提示和回滚行为"],
-            "expected": ["系统阻止非法提交", "错误提示明确", "无脏数据残留"],
+            "steps": ["\u6784\u9020\u975e\u6cd5\u6216\u7f3a\u5931\u8f93\u5165", "\u6267\u884c\u64cd\u4f5c", "\u89c2\u5bdf\u9519\u8bef\u63d0\u793a\u548c\u56de\u6eda\u884c\u4e3a"],
+            "expected": ["\u7cfb\u7edf\u963b\u6b62\u975e\u6cd5\u63d0\u4ea4", "\u9519\u8bef\u63d0\u793a\u660e\u786e", "\u65e0\u810f\u6570\u636e\u6b8b\u7559"],
             "case_type": resolved_case_types[min(1, len(resolved_case_types) - 1)],
         },
     ]
-    content = "已生成结构化测试用例草稿，可在下方继续编辑并保存。"
+    content = "\u5df2\u751f\u6210\u7ed3\u6784\u5316\u6d4b\u8bd5\u7528\u4f8b\u8349\u7a3f\uff0c\u53ef\u5728\u4e0b\u65b9\u7ee7\u7eed\u7f16\u8f91\u5e76\u4fdd\u5b58\u3002"
     if prompt:
-        content += f"\n额外关注：{prompt}"
+        content += f"\n\u989d\u5916\u5173\u6ce8\uff1a{prompt}"
     if use_knowledge_base and knowledge_bases:
-        content += f"\n已结合知识库：{'、'.join(knowledge_bases)}"
+        content += f"\n\u5df2\u7ed3\u5408\u77e5\u8bc6\u5e93\uff1a{'\u3001'.join(knowledge_bases)}"
     return content, cases
 
 
@@ -419,56 +595,156 @@ async def _generate_stage_result(
     context = _gather_stage_context(requirement, workflow, stage_index)
     llm_config = get_active_llm_config()
     stage_prompt_template = _find_stage_prompt_template(stage_key)
+    normalized_prompt = _normalize_prompt_text(prompt)
     case_types = case_types or []
     knowledge_bases = knowledge_bases or []
-
-    if stage_key == "cases":
-        schema = {
-            "content": "",
-            "cases": [
-                {
-                    "test_point": "",
-                    "title": "",
-                    "preconditions": [""],
-                    "steps": [""],
-                    "expected": [""],
-                    "priority": "P2",
-                    "case_type": "",
-                }
-            ],
-        }
-        stage_instruction = (
-            "请输出结构化测试用例，字段必须包含 test_point、title、preconditions、steps、expected、priority、case_type。"
-        )
-    else:
-        schema = {"content": ""}
-        stage_instruction = f"请输出“{WORKFLOW_STAGE_MAP[stage_key]['title']}”阶段结果。"
 
     extra_sections = []
     if stage_key == "cases":
         extra_sections.extend(
             [
-                f"用户选择的用例类型：{'、'.join(case_types) if case_types else '功能测试'}",
+                f"用户选择的用例类型：{'、'.join(case_types) if case_types else 'functional'}",
                 f"是否使用知识库：{'是' if use_knowledge_base else '否'}",
                 f"选择的知识库：{'、'.join(knowledge_bases) if knowledge_bases else '无'}",
                 "请确保 case_type 必须从用户选择的用例类型中取值。",
             ]
         )
 
-    user_prompt = "\n".join(
-        [
-            f"当前阶段：{WORKFLOW_STAGE_MAP[stage_key]['title']}",
-            stage_instruction,
-            f"阶段提示词模板名称：{stage_prompt_template.get('name', '')}",
-            "阶段提示词模板内容：",
-            stage_prompt_template.get("content", ""),
-            f"人工补充提示词：{prompt or '无'}",
-            *extra_sections,
-            context,
-            "请严格输出 JSON，不要输出额外解释。JSON 结构如下：",
-            json.dumps(schema, ensure_ascii=False),
-        ]
+    prompt_sections = [
+        f"当前阶段：{WORKFLOW_STAGE_MAP[stage_key]['title']}",
+        f"阶段提示词模板名称：{stage_prompt_template.get('name', '')}",
+        "阶段提示词模板内容：",
+        stage_prompt_template.get("content", ""),
+        f"人工补充提示词：{normalized_prompt or '无'}",
+        *extra_sections,
+        context,
+    ]
+    user_prompt = "\n".join(prompt_sections)
+
+    _log_workflow_event(
+        "workflow_generate_prepare",
+        requirement_id=requirement.get("id"),
+        requirement_title=requirement.get("title"),
+        stage_key=stage_key,
+        stage_title=WORKFLOW_STAGE_MAP[stage_key]["title"],
+        llm_config_id=llm_config.get("id"),
+        llm_config_name=llm_config.get("name"),
+        model_name=llm_config.get("model_name"),
+        api_url=llm_config.get("api_url"),
+        prompt_template_id=stage_prompt_template.get("id"),
+        prompt_template_name=stage_prompt_template.get("name"),
+        prompt_template_content=stage_prompt_template.get("content", ""),
+        manual_prompt=normalized_prompt,
+        case_types=case_types,
+        knowledge_bases=knowledge_bases,
+        use_knowledge_base=use_knowledge_base,
+        context_preview=context[:1000],
+        user_prompt=user_prompt,
     )
+
+    try:
+        max_tokens = 3600 if stage_key == "cases" else 1800
+        completion = await call_chat_completion(
+            api_url=llm_config["api_url"],
+            api_key=llm_config["api_key"],
+            model_name=llm_config["model_name"],
+            messages=[
+                {
+                    "role": "system",
+                    "content": "你是一位资深测试分析助手，擅长需求理解、测试点设计、审批确认和测试用例设计。",
+                },
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.2,
+            max_tokens=max_tokens,
+            timeout=90.0,
+        )
+        _log_workflow_event(
+            "workflow_generate_llm_response",
+            requirement_id=requirement.get("id"),
+            stage_key=stage_key,
+            model_name=completion.get("model") or llm_config.get("model_name"),
+            raw_response=completion.get("content", ""),
+        )
+        if stage_key != "cases":
+            content = str(completion.get("content", "")).strip()
+            if not content:
+                raise ValueError("empty stage content")
+            return content, []
+
+        payload = extract_json_payload(completion["content"])
+        _log_workflow_event(
+            "workflow_generate_json_parsed",
+            requirement_id=requirement.get("id"),
+            stage_key=stage_key,
+            parsed_keys=sorted(payload.keys()),
+        )
+        content = str(payload.get("content", "")).strip()
+        cases = payload.get("cases", []) if isinstance(payload.get("cases"), list) else []
+        normalized_cases = []
+        default_case_type = case_types[0] if case_types else "functional"
+        for index, item in enumerate(cases, start=1):
+            normalized = _normalize_case(item, index, requirement.get("title", "需求"), default_case_type)
+            if normalized:
+                normalized_cases.append(normalized)
+        if not normalized_cases:
+            raise ValueError("empty cases")
+        return content or "已生成结构化测试用例草稿。", normalized_cases
+    except Exception as exc:
+        logger.exception(
+            "workflow_generate_failed requirement_id=%s stage_key=%s prompt_template_id=%s llm_config_id=%s",
+            requirement.get("id"),
+            stage_key,
+            stage_prompt_template.get("id"),
+            llm_config.get("id"),
+        )
+        _log_workflow_event(
+            "workflow_generate_fallback",
+            requirement_id=requirement.get("id"),
+            stage_key=stage_key,
+            reason=str(exc),
+        )
+        if stage_key == "cases":
+            raise HTTPException(status_code=502, detail=f"生成用例失败：{exc}") from exc
+        return _fallback_stage_result(
+            stage_key,
+            requirement,
+            normalized_prompt,
+            workflow,
+            case_types=case_types,
+            knowledge_bases=knowledge_bases,
+            use_knowledge_base=use_knowledge_base,
+        )
+
+
+async def _generate_standalone_cases(
+    prompt: str,
+    case_types: list[str] | None = None,
+    knowledge_bases: list[str] | None = None,
+    use_knowledge_base: bool = False,
+) -> tuple[str, list[dict], dict]:
+    llm_config = get_active_llm_config()
+    stage_prompt_template = _find_stage_prompt_template("cases")
+    normalized_prompt = _normalize_prompt_text(prompt)
+    normalized_case_types = [
+        _normalize_case_type_key(item)
+        for item in (case_types or [])
+        if _normalize_case_type_key(item)
+    ]
+    normalized_knowledge_bases = [str(item).strip() for item in (knowledge_bases or []) if str(item).strip()]
+
+    prompt_sections = [
+        "Generate structured test cases based on the following information.",
+        f"Prompt template: {stage_prompt_template.get('name', '')}",
+        "System prompt:",
+        stage_prompt_template.get("content", ""),
+        f"User prompt: {normalized_prompt or 'None'}",
+        f"Case types: {', '.join(normalized_case_types) if normalized_case_types else 'functional'}",
+        f"Use knowledge base: {'yes' if use_knowledge_base else 'no'}",
+        f"Knowledge bases: {', '.join(normalized_knowledge_bases) if normalized_knowledge_bases else 'None'}",
+        'Return JSON only in the shape {"content": string, "cases": array}. Each case must include test_point, title, preconditions, steps, expected, priority, case_type.',
+    ]
+    user_prompt = "\n".join(item for item in prompt_sections if item)
 
     try:
         completion = await call_chat_completion(
@@ -478,55 +754,90 @@ async def _generate_stage_result(
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "你是一位资深测试分析助手，擅长需求理解、测试点设计、审批确认和测试用例设计。"
-                        "你必须输出符合要求的 JSON。"
-                    ),
+                    "content": "You are a senior QA engineer. Return structured test cases in JSON only.",
                 },
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.2,
-            max_tokens=1800,
+            max_tokens=3600,
             timeout=90.0,
         )
         payload = extract_json_payload(completion["content"])
         content = str(payload.get("content", "")).strip()
-        cases = payload.get("cases", []) if isinstance(payload.get("cases"), list) else []
-        normalized_cases = []
-        default_case_type = case_types[0] if case_types else "功能测试"
-        for index, item in enumerate(cases, start=1):
-            normalized = _normalize_case(item, index, requirement.get("title", "需求"), default_case_type)
+        raw_cases = payload.get("cases", []) if isinstance(payload.get("cases"), list) else []
+        default_case_type = normalized_case_types[0] if normalized_case_types else "functional"
+        normalized_cases: list[dict] = []
+        for index, item in enumerate(raw_cases, start=1):
+            normalized = _normalize_case(item, index, "Standalone case generation", default_case_type)
             if normalized:
                 normalized_cases.append(normalized)
-        if not content and stage_key != "cases":
-            raise ValueError("empty stage content")
-        if stage_key == "cases" and not normalized_cases:
+        if not normalized_cases:
             raise ValueError("empty cases")
-        return content or "已生成结构化测试用例草稿。", normalized_cases
-    except Exception:
-        return _fallback_stage_result(
-            stage_key,
-            requirement,
-            prompt,
-            workflow,
-            case_types=case_types,
-            knowledge_bases=knowledge_bases,
+        return content or "Generated test cases. You can continue editing and save them below.", normalized_cases, stage_prompt_template
+    except Exception as exc:
+        _log_workflow_event(
+            "standalone_case_generate_fallback",
+            reason=str(exc),
+            case_types=normalized_case_types,
+            knowledge_bases=normalized_knowledge_bases,
             use_knowledge_base=use_knowledge_base,
         )
+        fallback_content, fallback_cases = _fallback_stage_result(
+            "cases",
+            {"title": "Standalone case generation", "summary": normalized_prompt},
+            normalized_prompt,
+            {"stages": []},
+            case_types=normalized_case_types,
+            knowledge_bases=normalized_knowledge_bases,
+            use_knowledge_base=use_knowledge_base,
+        )
+        return fallback_content, fallback_cases, stage_prompt_template
 
 
 def _sync_generated_cases(requirement_id: str, generated_cases: list[dict]) -> None:
-    requirement = db.requirements.get(requirement_id)
-    module_name = requirement.get("title", "") if requirement else ""
-    existing = [
+    def identity_key(item: dict) -> tuple[str, str]:
+        return (
+            str(item.get("test_point", "")).strip(),
+            str(item.get("title", "")).strip(),
+        )
+
+    existing_cases = [
         item
         for item in db.test_cases.values()
-        if item["requirement_id"] == requirement_id and item.get("source") == "workflow"
+        if item["requirement_id"] == requirement_id
     ]
-    for item in existing:
-        del db.test_cases[item["id"]]
+    existing_by_key: dict[tuple[str, str], dict] = {}
+    for item in existing_cases:
+        key = identity_key(item)
+        if not any(key):
+            continue
+        current = existing_by_key.get(key)
+        if current is None or current.get("source") != "workflow":
+            existing_by_key[key] = item
 
     for index, item in enumerate(generated_cases, start=1):
+        record_key = identity_key(item)
+        existing = existing_by_key.get(record_key) if any(record_key) else None
+        if existing:
+            existing.update(
+                {
+                    "title": item.get("title") or existing.get("title") or f"自动生成用例-{index}",
+                    "test_point": item.get("test_point", ""),
+                    "preconditions": item.get("preconditions", []),
+                    "steps": item.get("steps", []),
+                    "expected": item.get("expected", []),
+                    "priority": item.get("priority", "P2"),
+                    "case_type": _normalize_case_type_key(item.get("case_type", "")),
+                    "module_id": item.get("module_id", existing.get("module_id", "")) or "",
+                    "stage": item.get("stage", existing.get("stage", "")),
+                    "review_status": item.get("review_status", existing.get("review_status", "待审核")),
+                    "creator": item.get("creator", existing.get("creator", "admin")),
+                    "version": int(existing.get("version", 1) or 1) + 1,
+                    "updated_at": now_iso(),
+                }
+            )
+            continue
+
         case_id = db.new_id("test_cases")
         record = {
             "id": case_id,
@@ -537,8 +848,8 @@ def _sync_generated_cases(requirement_id: str, generated_cases: list[dict]) -> N
             "steps": item.get("steps", []),
             "expected": item.get("expected", []),
             "priority": item.get("priority", "P2"),
-            "case_type": item.get("case_type", ""),
-            "module": item.get("module") or module_name,
+            "case_type": _normalize_case_type_key(item.get("case_type", "")),
+            "module_id": "",
             "stage": item.get("stage", ""),
             "review_status": item.get("review_status", "待审核"),
             "creator": item.get("creator", "admin"),
@@ -550,12 +861,82 @@ def _sync_generated_cases(requirement_id: str, generated_cases: list[dict]) -> N
         db.test_cases[case_id] = db.clone(record)
 
 
+@router.get("/generator/config")
+async def get_standalone_case_generator_config() -> dict:
+    prompt_template = _find_stage_prompt_template("cases")
+    return {
+        "template_name": prompt_template.get("name", ""),
+        "template_content": prompt_template.get("content", ""),
+    }
+
+
+@router.post("/generator/generate")
+async def generate_standalone_case_generator(payload: StandaloneCaseGeneratePayload) -> dict:
+    content, generated_cases, prompt_template = await _generate_standalone_cases(
+        prompt=payload.prompt,
+        case_types=payload.case_types,
+        knowledge_bases=payload.knowledge_bases,
+        use_knowledge_base=payload.use_knowledge_base,
+    )
+    return {
+        "content": content,
+        "generated_cases": generated_cases,
+        "template_name": prompt_template.get("name", ""),
+        "template_content": prompt_template.get("content", ""),
+    }
+
+
 @router.get("")
-async def list_test_cases(requirement_id: str | None = None) -> list[dict]:
+async def list_test_cases(
+    requirement_id: str | None = None,
+    keyword: str | None = None,
+    priority: str | None = None,
+    case_type: str | None = None,
+    module_id: str | None = None,
+    project_id: str | None = None,
+    project: str | None = None,
+    linked_only: bool | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=1000),
+) -> dict:
     cases = list(db.test_cases.values())
+    normalized_case_type = _normalize_case_type_key(case_type) if case_type else ""
     if requirement_id:
-        return [item for item in cases if item["requirement_id"] == requirement_id]
-    return cases
+        cases = [item for item in cases if item["requirement_id"] == requirement_id]
+    if linked_only:
+        cases = [item for item in cases if item.get("requirement_id") not in {"", "manual_case_root", None}]
+    resolved_project_id = project_id or project
+    if resolved_project_id:
+        cases = [
+            item
+            for item in cases
+            if (db.requirements.get(item.get("requirement_id")) or {}).get("project_id", "") == resolved_project_id
+        ]
+    if module_id:
+        cases = [item for item in cases if (item.get("module_id") or "") == module_id]
+    if priority:
+        cases = [item for item in cases if (item.get("priority") or "") == priority]
+    if normalized_case_type:
+        cases = [item for item in cases if (item.get("case_type") or "") == normalized_case_type]
+    if keyword:
+        normalized = keyword.strip().lower()
+        cases = [
+            item
+            for item in cases
+            if normalized in (item.get("title") or "").lower()
+            or normalized in (item.get("test_point") or "").lower()
+        ]
+    cases.sort(key=lambda item: (item.get("updated_at", ""), item.get("created_at", ""), item.get("id", "")), reverse=True)
+    total = len(cases)
+    start = (page - 1) * page_size
+    end = start + page_size
+    page_items = [_serialize_test_case(item) for item in cases[start:end]]
+    return {"items": page_items, "total": total, "page": page, "page_size": page_size}
+
+
+@router.get("/sidebar")
+async def get_test_case_sidebar() -> dict:
+    return _build_case_sidebar_payload()
 
 
 @router.get("/modules")
@@ -609,7 +990,7 @@ async def delete_test_case_module(module_id: str) -> dict:
     has_children = any(item.get("parent_id") == module_id for item in db.test_case_modules.values())
     if has_children:
         raise HTTPException(status_code=400, detail="Please delete child modules first")
-    has_cases = any(item.get("module") == module.get("name") for item in db.test_cases.values())
+    has_cases = any(item.get("module_id") == module_id for item in db.test_cases.values())
     if has_cases:
         raise HTTPException(status_code=400, detail="Please move or delete related test cases first")
     del db.test_case_modules[module_id]
@@ -622,6 +1003,9 @@ async def create_test_case(payload: TestCaseIn) -> dict:
     requirement = db.requirements.get(resolved_requirement_id)
     if not requirement:
         raise HTTPException(status_code=404, detail="Requirement not found")
+    module = _resolve_module(payload.module_id)
+    if payload.module_id and not module:
+        raise HTTPException(status_code=404, detail="Module not found")
     case_id = db.new_id("test_cases")
     record = {
         "id": case_id,
@@ -632,8 +1016,8 @@ async def create_test_case(payload: TestCaseIn) -> dict:
         "steps": payload.steps,
         "expected": payload.expected,
         "priority": payload.priority,
-        "case_type": payload.case_type,
-        "module": payload.module or (requirement.get("title", "") if requirement else ""),
+        "case_type": _normalize_case_type_key(payload.case_type),
+        "module_id": payload.module_id if module else "",
         "stage": payload.stage,
         "review_status": payload.review_status or "待审核",
         "creator": payload.creator or "admin",
@@ -642,7 +1026,7 @@ async def create_test_case(payload: TestCaseIn) -> dict:
         "updated_at": now_iso(),
     }
     db.test_cases[case_id] = db.clone(record)
-    return record
+    return _serialize_test_case(record)
 
 
 @router.put("/{case_id}")
@@ -654,6 +1038,9 @@ async def update_test_case(case_id: str, payload: TestCaseIn) -> dict:
     requirement = db.requirements.get(resolved_requirement_id)
     if not requirement:
         raise HTTPException(status_code=404, detail="Requirement not found")
+    module = _resolve_module(payload.module_id)
+    if payload.module_id and not module:
+        raise HTTPException(status_code=404, detail="Module not found")
     test_case.update(
         {
             "requirement_id": resolved_requirement_id,
@@ -663,8 +1050,8 @@ async def update_test_case(case_id: str, payload: TestCaseIn) -> dict:
             "steps": payload.steps,
             "expected": payload.expected,
             "priority": payload.priority,
-            "case_type": payload.case_type,
-            "module": payload.module or (requirement.get("title", "") if requirement else test_case.get("module", "")),
+            "case_type": _normalize_case_type_key(payload.case_type),
+            "module_id": payload.module_id if module else "",
             "stage": payload.stage,
             "review_status": payload.review_status or test_case.get("review_status", "待审核"),
             "creator": payload.creator or test_case.get("creator", "admin"),
@@ -672,7 +1059,7 @@ async def update_test_case(case_id: str, payload: TestCaseIn) -> dict:
             "updated_at": now_iso(),
         }
     )
-    return test_case
+    return _serialize_test_case(test_case)
 
 
 @router.delete("/{case_id}")
@@ -700,17 +1087,18 @@ async def update_workflow_draft(requirement_id: str, payload: WorkflowDraftPaylo
     workflow = _normalize_workflow(requirement)
     stage_index = _stage_index(payload.stage_key)
     stage = workflow["stages"][stage_index]
+    selected_case_types = [_normalize_case_type_key(item) for item in payload.case_types if _normalize_case_type_key(item)]
     stage["content"] = payload.content
     stage["prompt"] = payload.prompt
     if payload.stage_key == "cases":
         normalized_cases = []
-        default_case_type = payload.case_types[0] if payload.case_types else "功能测试"
+        default_case_type = selected_case_types[0] if selected_case_types else "functional"
         for index, item in enumerate(payload.generated_cases, start=1):
             normalized = _normalize_case(item, index, requirement.get("title", "需求"), default_case_type)
             if normalized:
                 normalized_cases.append(normalized)
         stage["generated_cases"] = normalized_cases
-        stage["case_types"] = payload.case_types or stage.get("case_types", [])
+        stage["case_types"] = selected_case_types or stage.get("case_types", [])
         stage["knowledge_bases"] = payload.knowledge_bases
         stage["use_knowledge_base"] = payload.use_knowledge_base
         _sync_generated_cases(requirement_id, normalized_cases)
@@ -728,13 +1116,25 @@ async def generate_workflow_stage(requirement_id: str, payload: WorkflowGenerate
     stage_index = _stage_index(payload.stage_key)
     if stage_index > workflow["current_stage_index"] and not workflow.get("completed"):
         raise HTTPException(status_code=400, detail="Current stage is locked")
+    selected_case_types = [_normalize_case_type_key(item) for item in payload.case_types if _normalize_case_type_key(item)]
+
+    _log_workflow_event(
+        "workflow_generate_requested",
+        requirement_id=requirement_id,
+        stage_key=payload.stage_key,
+        prompt=payload.prompt,
+        case_types=selected_case_types,
+        knowledge_bases=payload.knowledge_bases,
+        use_knowledge_base=payload.use_knowledge_base,
+        existing_generated_case_count=len(workflow["stages"][stage_index].get("generated_cases", [])),
+    )
 
     content, generated_cases = await _generate_stage_result(
         requirement,
         workflow,
         payload.stage_key,
         payload.prompt,
-        case_types=payload.case_types,
+        case_types=selected_case_types,
         knowledge_bases=payload.knowledge_bases,
         use_knowledge_base=payload.use_knowledge_base,
     )
@@ -743,11 +1143,18 @@ async def generate_workflow_stage(requirement_id: str, payload: WorkflowGenerate
     stage["content"] = content
     stage["generated_cases"] = generated_cases
     if payload.stage_key == "cases":
-        stage["case_types"] = payload.case_types or stage.get("case_types", [])
+        stage["case_types"] = selected_case_types or stage.get("case_types", [])
         stage["knowledge_bases"] = payload.knowledge_bases
         stage["use_knowledge_base"] = payload.use_knowledge_base
     stage["updated_at"] = now_iso()
     workflow = _persist_workflow(requirement, workflow)
+    _log_workflow_event(
+        "workflow_generate_completed",
+        requirement_id=requirement_id,
+        stage_key=payload.stage_key,
+        content_length=len(content or ""),
+        generated_case_count=len(generated_cases),
+    )
     return _serialize_workflow(requirement, workflow)
 
 
@@ -784,17 +1191,18 @@ async def confirm_workflow_stage(requirement_id: str, payload: WorkflowDraftPayl
         raise HTTPException(status_code=400, detail="Only the current active stage can be confirmed")
 
     stage = workflow["stages"][stage_index]
+    selected_case_types = [_normalize_case_type_key(item) for item in payload.case_types if _normalize_case_type_key(item)]
     stage["content"] = payload.content
     stage["prompt"] = payload.prompt
     if payload.stage_key == "cases":
         normalized_cases = []
-        default_case_type = payload.case_types[0] if payload.case_types else "功能测试"
+        default_case_type = selected_case_types[0] if selected_case_types else "functional"
         for index, item in enumerate(payload.generated_cases, start=1):
             normalized = _normalize_case(item, index, requirement.get("title", "需求"), default_case_type)
             if normalized:
                 normalized_cases.append(normalized)
         stage["generated_cases"] = normalized_cases
-        stage["case_types"] = payload.case_types or stage.get("case_types", [])
+        stage["case_types"] = selected_case_types or stage.get("case_types", [])
         stage["knowledge_bases"] = payload.knowledge_bases
         stage["use_knowledge_base"] = payload.use_knowledge_base
         _sync_generated_cases(requirement_id, normalized_cases)
@@ -818,8 +1226,16 @@ async def rollback_workflow_stage(requirement_id: str, payload: WorkflowRollback
     stage_index = _stage_index(payload.stage_key)
     workflow["current_stage_index"] = stage_index
     workflow["completed"] = False
-    for index in range(stage_index, len(workflow["stages"])):
-        workflow["stages"][index]["confirmed_at"] = None
-        workflow["stages"][index]["updated_at"] = now_iso()
+    current_time = now_iso()
+
+    target_stage = workflow["stages"][stage_index]
+    target_stage["confirmed_at"] = None
+    target_stage["updated_at"] = current_time
+
+    for index in range(stage_index + 1, len(workflow["stages"])):
+        reset_stage = _build_default_stage(workflow["stages"][index]["key"])
+        reset_stage["updated_at"] = current_time
+        workflow["stages"][index] = reset_stage
+
     workflow = _persist_workflow(requirement, workflow)
     return _serialize_workflow(requirement, workflow)

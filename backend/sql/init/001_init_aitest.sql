@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS requirements (
   id VARCHAR(64) PRIMARY KEY,
   title VARCHAR(200) NOT NULL,
   body_text LONGTEXT NOT NULL,
+  project_id VARCHAR(64) NOT NULL DEFAULT '',
   project VARCHAR(100) NOT NULL DEFAULT 'Demo Project',
   status VARCHAR(50) NOT NULL DEFAULT 'draft',
   creator VARCHAR(50) NOT NULL DEFAULT 'admin',
@@ -43,6 +44,7 @@ CREATE TABLE IF NOT EXISTS requirements (
   updated_at DATETIME NULL,
   extra_data JSON NOT NULL,
   KEY idx_requirements_title (title),
+  KEY idx_requirements_project_id (project_id),
   KEY idx_requirements_project (project),
   KEY idx_requirements_status (status),
   KEY idx_requirements_creator (creator),
@@ -54,9 +56,17 @@ CREATE TABLE IF NOT EXISTS test_cases (
   id VARCHAR(64) PRIMARY KEY,
   requirement_id VARCHAR(64) NOT NULL,
   title VARCHAR(200) NOT NULL,
+  test_point VARCHAR(200) NOT NULL DEFAULT '',
+  preconditions JSON NOT NULL,
   steps JSON NOT NULL,
   expected JSON NOT NULL,
   priority VARCHAR(10) NOT NULL DEFAULT 'P2',
+  case_type VARCHAR(64) NOT NULL DEFAULT '',
+  module_id VARCHAR(64) NOT NULL DEFAULT '',
+  stage VARCHAR(50) NOT NULL DEFAULT '',
+  review_status VARCHAR(20) NOT NULL DEFAULT '',
+  creator VARCHAR(50) NOT NULL DEFAULT 'admin',
+  source VARCHAR(20) NOT NULL DEFAULT '',
   version INT NOT NULL DEFAULT 1,
   created_at DATETIME NULL,
   updated_at DATETIME NULL,
@@ -64,6 +74,10 @@ CREATE TABLE IF NOT EXISTS test_cases (
   KEY idx_test_cases_requirement_id (requirement_id),
   KEY idx_test_cases_title (title),
   KEY idx_test_cases_priority (priority),
+  KEY idx_test_cases_case_type (case_type),
+  KEY idx_test_cases_module_id (module_id),
+  KEY idx_test_cases_stage (stage),
+  KEY idx_test_cases_creator (creator),
   CONSTRAINT fk_test_cases_requirement FOREIGN KEY (requirement_id) REFERENCES requirements(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -114,6 +128,21 @@ CREATE TABLE IF NOT EXISTS prompt_templates (
   KEY idx_prompt_templates_name (name),
   KEY idx_prompt_templates_enabled (enabled),
   KEY idx_prompt_templates_is_default (is_default)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS dictionaries (
+  id VARCHAR(64) PRIMARY KEY,
+  `group` VARCHAR(100) NOT NULL DEFAULT '',
+  `key` VARCHAR(100) NOT NULL,
+  value VARCHAR(200) NOT NULL DEFAULT '',
+  sort_order INT NOT NULL DEFAULT 0,
+  enabled TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME NULL,
+  updated_at DATETIME NULL,
+  extra_data JSON NOT NULL,
+  KEY idx_dictionaries_group (`group`),
+  KEY idx_dictionaries_key (`key`),
+  KEY idx_dictionaries_enabled (enabled)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS mcp_tools (

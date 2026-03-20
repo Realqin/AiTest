@@ -1,11 +1,19 @@
 ﻿from pathlib import Path
 
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import agent_config, ai, llm_config, mcp, projects, prompt_template, requirements, test_cases
+from app.api import agent_config, ai, dictionaries, llm_config, mcp, projects, prompt_template, requirements, test_cases
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
 
 app = FastAPI(
@@ -22,6 +30,7 @@ app = FastAPI(
         {"name": "agents", "description": "Agent role and prompt configuration"},
         {"name": "llm-configs", "description": "LLM configuration management"},
         {"name": "prompt-templates", "description": "Prompt template management"},
+        {"name": "dictionaries", "description": "Dictionary data management"},
         {"name": "ai", "description": "AI review, generation, and chat"},
         {"name": "mcp", "description": "MCP tool registration and management"},
     ],
@@ -56,4 +65,5 @@ app.include_router(ai.router, prefix="/api/ai", tags=["ai"])
 app.include_router(agent_config.router, prefix="/api/agents", tags=["agents"])
 app.include_router(llm_config.router, prefix="/api/llm-configs", tags=["llm-configs"])
 app.include_router(prompt_template.router, prefix="/api/prompts", tags=["prompt-templates"])
+app.include_router(dictionaries.router, prefix="/api/dictionaries", tags=["dictionaries"])
 app.include_router(mcp.router, prefix="/api/mcp", tags=["mcp"])

@@ -33,7 +33,7 @@ router = APIRouter()
 class RequirementIn(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     content: str = Field(min_length=1)
-    project: str = Field(default="演示项目", max_length=100)
+    project_id: str = Field(default="", max_length=64)
     status: str = Field(default="草稿", max_length=50)
     creator: str = Field(default="admin", max_length=50)
     summary: str = Field(default="", max_length=500)
@@ -60,6 +60,12 @@ DOCX_NS = {
     "pic": "http://schemas.openxmlformats.org/drawingml/2006/picture",
     "v": "urn:schemas-microsoft-com:vml",
 }
+
+
+def _resolve_project(project_id: str) -> dict | None:
+    if not project_id:
+        return None
+    return db.projects.get(project_id)
 
 
 def _strip_xml_namespaces(xml_text: str) -> str:
@@ -228,10 +234,12 @@ def _refresh_requirement_docx_preview(requirement: dict) -> None:
 
 
 def serialize_requirement_list_item(requirement: dict) -> dict:
+    project = _resolve_project(requirement.get("project_id", ""))
     return {
         "id": requirement["id"],
         "title": requirement["title"],
-        "project": requirement["project"],
+        "project_id": requirement.get("project_id", ""),
+        "project": project.get("name", requirement["project"]) if project else requirement["project"],
         "creator": requirement["creator"],
         "created_date": requirement.get("created_date", ""),
         "created_at": requirement.get("created_at", ""),
@@ -245,13 +253,15 @@ def serialize_requirement_list_item(requirement: dict) -> dict:
 
 
 def serialize_requirement_detail(requirement: dict) -> dict:
+    project = _resolve_project(requirement.get("project_id", ""))
     file_url = ""
     if requirement.get("stored_file_name"):
         file_url = f"/assets/requirements/{requirement['stored_file_name']}"
     return {
         "id": requirement["id"],
         "title": requirement["title"],
-        "project": requirement["project"],
+        "project_id": requirement.get("project_id", ""),
+        "project": project.get("name", requirement["project"]) if project else requirement["project"],
         "body_text": requirement.get("body_text", ""),
         "review_status": requirement.get("review_status", "???"),
         "latest_review_run_id": requirement.get("latest_review_run_id"),
@@ -267,11 +277,13 @@ def serialize_requirement_detail(requirement: dict) -> dict:
 def build_requirement_record(payload: dict) -> dict:
     req_id = db.new_id("requirements")
     created_date = now_iso()[:10]
+    project = _resolve_project(payload.get("project_id", ""))
     return {
         "id": req_id,
         "title": payload["title"],
         "body_text": payload["body_text"],
-        "project": payload.get("project", "演示项目"),
+        "project_id": payload.get("project_id", ""),
+        "project": project.get("name", payload.get("project", "演示项目")) if project else payload.get("project", "演示项目"),
         "status": payload.get("status", "草稿"),
         "creator": payload.get("creator", "admin"),
         "summary": payload.get("summary") or payload["body_text"][:80],
@@ -314,7 +326,7 @@ async def jira_proxy(url: str = Query(..., min_length=1)) -> Response:
 @router.get("")
 async def list_requirements(
     keyword: str = "",
-    project: str = "",
+    project_id: str = "",
     review_status: str = "",
     creator: str = "",
     start_date: str = "",
@@ -348,8 +360,8 @@ async def list_requirements(
             or keyword_lower in item["body_text"].lower()
             or keyword_lower in item["summary"].lower()
         ]
-    if project:
-        items = [item for item in items if item["project"] == project]
+    if project_id:
+        items = [item for item in items if item.get("project_id", "") == project_id]
     if review_status:
         items = [item for item in items if item.get("review_status", "???") == review_status]
     if creator:
@@ -368,6 +380,8 @@ async def list_requirements(
 
 @router.post("")
 async def create_requirement(payload: RequirementIn) -> dict:
+    if payload.project_id and not _resolve_project(payload.project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
     record = build_requirement_record({**payload.model_dump(), "body_text": payload.content})
     db.requirements[record["id"]] = db.clone(record)
     db.requirement_versions[record["id"]].append(
@@ -378,7 +392,7 @@ async def create_requirement(payload: RequirementIn) -> dict:
 
 @router.post("/import")
 async def import_requirement(
-    project: str = Form(...),
+    project_id: str = Form(...),
     title: str = Form(""),
     creator: str = Form("admin"),
     import_method: str = Form("file"),
@@ -387,6 +401,9 @@ async def import_requirement(
     summary: str = Form(""),
     file: UploadFile | None = File(default=None),
 ) -> dict:
+    project = _resolve_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
     body_text = ""
     file_name = ""
     stored_file_name = ""
@@ -440,7 +457,8 @@ async def import_requirement(
         {
             "title": resolved_title,
             "body_text": body_text,
-            "project": project,
+            "project_id": project_id,
+            "project": project["name"],
             "status": status,
             "creator": creator,
             "summary": summary or body_text[:80] or resolved_title,
@@ -482,7 +500,8 @@ async def preview_requirement(requirement_id: str) -> dict:
     return {
         "id": requirement["id"],
         "title": requirement["title"],
-        "project": requirement["project"],
+        "project_id": requirement.get("project_id", ""),
+        "project": _resolve_project(requirement.get("project_id", ""))["name"] if _resolve_project(requirement.get("project_id", "")) else requirement["project"],
         "body_text": requirement["body_text"],
         "review_status": requirement.get("review_status", "待评审"),
         "latest_review_run_id": requirement.get("latest_review_run_id"),
@@ -500,9 +519,13 @@ async def update_requirement(requirement_id: str, payload: RequirementIn) -> dic
     requirement = db.requirements.get(requirement_id)
     if not requirement:
         raise HTTPException(status_code=404, detail="Requirement not found")
+    project = _resolve_project(payload.project_id)
+    if payload.project_id and not project:
+        raise HTTPException(status_code=404, detail="Project not found")
     requirement["title"] = payload.title
     requirement["body_text"] = payload.content
-    requirement["project"] = payload.project
+    requirement["project_id"] = payload.project_id
+    requirement["project"] = project.get("name", requirement.get("project", "")) if project else requirement.get("project", "")
     requirement["status"] = payload.status
     requirement["creator"] = payload.creator
     requirement["summary"] = payload.summary or payload.content[:80]

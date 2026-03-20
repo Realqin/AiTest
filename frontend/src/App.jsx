@@ -9,6 +9,7 @@ import {
   deleteTestCase,
   deleteRequirement,
   deleteProject,
+  getDictionaries,
   getHealth,
   getProjects,
   getRequirementImportConfig,
@@ -19,6 +20,7 @@ import {
   getReviewRun,
   getReviewRunStatus,
   getTestCaseModules,
+  getTestCaseSidebar,
   getTestCases,
   importRequirement,
   startRequirementReview,
@@ -29,6 +31,7 @@ import {
 import LlmConfigPage from "./LlmConfigPage";
 import PromptManagementPage from "./PromptManagementPage";
 import TestCaseWorkflowPage from "./TestCaseWorkflowPage";
+import StandaloneCaseGeneratorPage from "./StandaloneCaseGeneratorPage";
 import "./styles.css";
 
 const MODULES = {
@@ -52,7 +55,7 @@ const ANALYSIS_CLASS_MAP = {
 const DEFAULT_FILTERS = {
   start_date: "",
   end_date: "",
-  project: "",
+  project_id: "",
   review_status: "",
   creator: "",
   keyword: "",
@@ -73,7 +76,7 @@ const DEFAULT_PROJECT_FORM = {
 };
 
 const DEFAULT_IMPORT_FORM = {
-  project: "",
+  project_id: "",
   title: "",
   creator: "admin",
   import_method: "file",
@@ -82,9 +85,121 @@ const DEFAULT_IMPORT_FORM = {
   summary: "",
 };
 
-const CASE_TYPE_OPTIONS = ["功能测试", "边界测试", "异常测试", "权限测试", "安全测试", "兼容性测试", "冒烟测试"];
-const CASE_PRIORITY_OPTIONS = ["P1", "P2", "P3"];
+const MANUAL_CASE_REQUIREMENT_ID = "manual_case_root";
+
+const DEFAULT_CASE_TYPE_OPTIONS = [
+  { key: "functional", value: "功能测试" },
+  { key: "boundary", value: "边界测试" },
+  { key: "exception", value: "异常测试" },
+  { key: "permission", value: "权限测试" },
+  { key: "security", value: "安全测试" },
+  { key: "compatibility", value: "兼容性测试" },
+  { key: "smoke", value: "冒烟测试" },
+];
+const DEFAULT_CASE_PRIORITY_OPTIONS = [
+  { key: "P0", value: "高级" },
+  { key: "P1", value: "中级" },
+  { key: "P2", value: "低级" },
+  { key: "P3", value: "最低级" },
+];
 const CASE_STAGE_OPTIONS = ["需求分析", "开发中", "提测", "回归测试", "验收测试"];
+const CASE_EXPORT_FIELD_COLUMNS = [
+  { key: "test_point", label: "测试点" },
+  { key: "title", label: "用例名称" },
+  { key: "priority_label", label: "优先级" },
+  { key: "case_type", label: "测试类型" },
+  { key: "module_name", label: "所属模块" },
+  { key: "creator", label: "创建者" },
+  { key: "created_at", label: "创建时间" },
+  { key: "system_name", label: "所属系统" },
+  { key: "requirement_no", label: "需求编号" },
+  { key: "requirement_name", label: "需求名称" },
+  { key: "preconditions_text", label: "前置条件" },
+  { key: "steps_text", label: "测试步骤" },
+  { key: "expected_text", label: "预期结果" },
+  { key: "stage", label: "适用阶段" },
+];
+const CASE_EXPORT_FIELD_LABEL_MAP = Object.fromEntries(CASE_EXPORT_FIELD_COLUMNS.map((item) => [item.key, item.label]));
+const CASE_EXPORT_DEFAULT_FIELDS = {
+  excel: [
+    "system_name",
+    "module_name",
+    "requirement_no",
+    "requirement_name",
+    "title",
+    "preconditions_text",
+    "steps_text",
+    "expected_text",
+    "priority_label",
+    "case_type",
+    "stage",
+  ],
+  word: [
+    "title",
+    "case_type",
+    "priority_label",
+    "preconditions_text",
+    "test_point",
+    "steps_text",
+    "expected_text",
+    "actual_result",
+    "test_status",
+  ],
+};
+const CASE_EXPORT_STYLE_PRESETS = {
+  excel: {
+    titleText: "用例导出",
+    titleColor: "#111827",
+    metaColor: "#475569",
+    headerBg: "#37379b",
+    headerText: "#ffffff",
+    borderColor: "#2f3075",
+    bodyText: "#111827",
+    titleSize: 20,
+    headerSize: 12,
+    bodySize: 12,
+  },
+  word: {
+    titleText: "测试用例",
+    titleColor: "#1d63d8",
+    metaColor: "#475569",
+    headerBg: "#d9d9d9",
+    headerText: "#111827",
+    borderColor: "#333333",
+    bodyText: "#111827",
+    titleSize: 28,
+    headerSize: 12,
+    bodySize: 12,
+  },
+};
+const CASE_EXPORT_RICH_FIELDS = new Set(["preconditions_text", "steps_text", "expected_text", "test_point"]);
+const CASE_EXPORT_SAMPLE_ROW = {
+  serial: 1,
+  system_name: "船舶预警系统",
+  module_name: "综合模型模块",
+  requirement_no: "REQ-138",
+  requirement_name: "综合模型模板编辑",
+  title: "综合模型模板编辑",
+  preconditions_text: "1. 双反打私账号登录",
+  steps_text: `1. ??????-????-????
+2. ?????????????
+3. ?????????????????`,
+  expected_text: `1. ????????
+2. ??????????
+3. ????????`,
+  priority_label: "高级",
+  case_type: "功能用例",
+  stage: "回归测试",
+  test_point: "双反打私账号登录",
+  actual_result: "",
+  test_status: "通过",
+};
+function cloneCaseExportStyle(format) {
+  return { ...CASE_EXPORT_STYLE_PRESETS[format] };
+}
+function getDefaultCaseExportFields(format) {
+  return [...CASE_EXPORT_DEFAULT_FIELDS[format]];
+}
 
 function createCaseStep(index = 1) {
   return {
@@ -94,11 +209,11 @@ function createCaseStep(index = 1) {
   };
 }
 
-function createEmptyCaseForm(requirementId = "", moduleName = "") {
+function createEmptyCaseForm(requirementId = "", moduleId = "") {
   return {
     requirement_id: requirementId,
-    module: moduleName,
-    case_type: "功能测试",
+    module_id: moduleId,
+    case_type: "functional",
     stage: "",
     title: "",
     test_point: "",
@@ -328,44 +443,100 @@ function App() {
   const [reviewOptions, setReviewOptions] = useState(REVIEW_OPTIONS);
   const [testCases, setTestCases] = useState([]);
   const [caseModules, setCaseModules] = useState([]);
+  const [caseSidebarData, setCaseSidebarData] = useState({ all_count: 0, linked_count: 0, module_tree: [], requirement_tree: { id: "requirement-root", name: "需求类", count: 0, children: [] } });
   const [caseFilters, setCaseFilters] = useState({ keyword: "", priority: "", caseType: "" });
+  const [caseKeywordInput, setCaseKeywordInput] = useState("");
+  const [casePagination, setCasePagination] = useState({ page: 1, page_size: 10 });
   const [caseModuleKeyword, setCaseModuleKeyword] = useState("");
-  const [selectedCaseModule, setSelectedCaseModule] = useState("");
+  const [caseModuleKeywordInput, setCaseModuleKeywordInput] = useState("");
+  const [selectedCaseScope, setSelectedCaseScope] = useState({ kind: "all", value: "" });
   const [caseEditorMode, setCaseEditorMode] = useState("list");
   const [editingCaseId, setEditingCaseId] = useState("");
   const [caseForm, setCaseForm] = useState(createEmptyCaseForm());
+  const [caseTypeDicts, setCaseTypeDicts] = useState([]);
+  const [casePriorityDicts, setCasePriorityDicts] = useState([]);
   const [showCaseModuleModal, setShowCaseModuleModal] = useState(false);
   const [caseModuleForm, setCaseModuleForm] = useState({ parent_id: "", name: "" });
   const [editingCaseModuleId, setEditingCaseModuleId] = useState("");
   const [expandedCaseModuleIds, setExpandedCaseModuleIds] = useState({});
+  const [caseSidebarCollapsed, setCaseSidebarCollapsed] = useState(false);
+  const [showCaseExportModal, setShowCaseExportModal] = useState(false);
+  const [caseExportFormat, setCaseExportFormat] = useState("excel");
+  const [caseExportFields, setCaseExportFields] = useState(getDefaultCaseExportFields("excel"));
+  const [caseExportStyle, setCaseExportStyle] = useState(() => cloneCaseExportStyle("excel"));
+  const [showCaseExportFieldMenu, setShowCaseExportFieldMenu] = useState(false);
+  const [draggingCaseExportField, setDraggingCaseExportField] = useState("");
+  const [exportingCases, setExportingCases] = useState(false);
 
-  const projectNames = useMemo(() => projects.map((item) => item.name), [projects]);
+  const projectMap = useMemo(() => Object.fromEntries(projects.map((item) => [item.id, item])), [projects]);
   const activeTab = openTabs.find((tab) => tab.key === activeTabKey) || openTabs[0];
   const requirementOptions = useMemo(
     () => requirements.map((item) => ({ id: item.id, label: item.title || item.summary || item.id })),
     [requirements]
   );
-  const caseModuleOptions = useMemo(() => {
-    const values = new Set([...caseModules.map((item) => item.name), ...testCases.map((item) => item.module || "").filter(Boolean)]);
-    return Array.from(values);
-  }, [caseModules, testCases]);
+  const caseModuleMap = useMemo(() => Object.fromEntries(caseModules.map((item) => [item.id, item])), [caseModules]);
+  const requirementMap = useMemo(() => Object.fromEntries(requirements.map((item) => [item.id, item])), [requirements]);
+  const requirementCaseTargets = useMemo(
+    () =>
+      requirements
+        .filter((item) => !item.hidden)
+        .map((item) => ({
+          key: `req:${item.id}`,
+          label: `${item.project || projectMap[item.project_id]?.name || "未分组项目"} / ${item.title || item.summary || item.id}`,
+          requirementId: item.id,
+          moduleId: "",
+          group: "需求类",
+        })),
+    [projectMap, requirements]
+  );
+  const customCaseTargets = useMemo(
+    () =>
+      caseModules.map((item) => ({
+        key: `module:${item.id}`,
+        label: item.name,
+        requirementId: "",
+        moduleId: item.id,
+        group: "自定义分组",
+      })),
+    [caseModules]
+  );
+  const caseTargetOptions = useMemo(() => [...requirementCaseTargets, ...customCaseTargets], [customCaseTargets, requirementCaseTargets]);
+  const caseTypeOptions = useMemo(
+    () => (caseTypeDicts.length ? caseTypeDicts : DEFAULT_CASE_TYPE_OPTIONS),
+    [caseTypeDicts]
+  );
+  const casePriorityOptions = useMemo(
+    () => (casePriorityDicts.length ? casePriorityDicts : DEFAULT_CASE_PRIORITY_OPTIONS),
+    [casePriorityDicts]
+  );
+  const casePriorityLabelMap = useMemo(
+    () => Object.fromEntries(casePriorityOptions.map((item) => [item.key, item.value])),
+    [casePriorityOptions]
+  );
   const filteredModuleOptions = useMemo(() => {
     const keyword = caseModuleKeyword.trim().toLowerCase();
-    if (!keyword) return caseModuleOptions;
-    return caseModuleOptions.filter((item) => item.toLowerCase().includes(keyword));
-  }, [caseModuleKeyword, caseModuleOptions]);
-  const filteredTestCases = useMemo(() => {
-    return testCases.filter((item) => {
-      const matchModule = !selectedCaseModule || (item.module || "") === selectedCaseModule;
-      const matchKeyword =
-        !caseFilters.keyword ||
-        (item.title || "").toLowerCase().includes(caseFilters.keyword.toLowerCase()) ||
-        (item.test_point || "").toLowerCase().includes(caseFilters.keyword.toLowerCase());
-      const matchPriority = !caseFilters.priority || item.priority === caseFilters.priority;
-      const matchCaseType = !caseFilters.caseType || item.case_type === caseFilters.caseType;
-      return matchModule && matchKeyword && matchPriority && matchCaseType;
-    });
-  }, [caseFilters, selectedCaseModule, testCases]);
+    if (!keyword) return caseModules;
+    return caseModules.filter((item) => item.name.toLowerCase().includes(keyword));
+  }, [caseModuleKeyword, caseModules]);
+  const currentCaseQuery = useMemo(() => {
+    const query = {
+      keyword: caseFilters.keyword,
+      priority: caseFilters.priority,
+      case_type: caseFilters.caseType,
+      page: casePagination.page,
+      page_size: casePagination.page_size,
+    };
+    if (selectedCaseScope.kind === "module") query.module_id = selectedCaseScope.value;
+    if (selectedCaseScope.kind === "requirement") query.requirement_id = selectedCaseScope.value;
+    if (selectedCaseScope.kind === "project") {
+      query.project_id = selectedCaseScope.value;
+      query.linked_only = true;
+    }
+    if (selectedCaseScope.kind === "requirement_root") {
+      query.linked_only = true;
+    }
+    return query;
+  }, [caseFilters.caseType, caseFilters.keyword, caseFilters.priority, casePagination.page, casePagination.page_size, selectedCaseScope]);
 
   async function runSafe(task) {
     try {
@@ -393,10 +564,16 @@ function App() {
     setSelectedIds([]);
   }
 
-  async function loadTestCases() {
-    const caseList = await getTestCases("");
-    setTestCases(caseList || []);
-    setCaseCount(caseList.length);
+  async function loadTestCases(overrides = {}) {
+    const params = { ...currentCaseQuery, ...overrides };
+    const result = await getTestCases(params);
+    setTestCases(result.items || []);
+    setCaseCount(result.total || 0);
+    setCasePagination((prev) => ({
+      ...prev,
+      page: result.page || params.page || prev.page,
+      page_size: result.page_size || params.page_size || prev.page_size,
+    }));
   }
 
   async function loadCaseModules() {
@@ -407,6 +584,24 @@ function App() {
       (items || []).forEach((item) => {
         if (next[item.id] === undefined) next[item.id] = true;
       });
+      return next;
+    });
+  }
+
+  async function loadCaseSidebar() {
+    const result = await getTestCaseSidebar();
+    setCaseSidebarData(result || { all_count: 0, linked_count: 0, module_tree: [], requirement_tree: { id: "requirement-root", name: "需求类", count: 0, children: [] } });
+    setExpandedCaseModuleIds((prev) => {
+      const next = { ...prev };
+      const visit = (nodes = []) => {
+        nodes.forEach((node) => {
+          if (next[node.id] === undefined) next[node.id] = true;
+          visit(node.children || []);
+        });
+      };
+      visit(result?.module_tree || []);
+      const requirementChildren = result?.requirement_tree?.children || [];
+      visit(requirementChildren);
       return next;
     });
   }
@@ -422,6 +617,15 @@ function App() {
     return items;
   }
 
+  async function loadCaseDictionaries() {
+    const [typeResult, priorityResult] = await Promise.all([
+      getDictionaries("case_type"),
+      getDictionaries("case_priority"),
+    ]);
+    setCaseTypeDicts(typeResult.items || []);
+    setCasePriorityDicts(priorityResult.items || []);
+  }
+
   useEffect(() => {
     getHealth().then((res) => setHealth(res.status)).catch(() => setHealth("down"));
     runSafe(async () => {
@@ -429,10 +633,25 @@ function App() {
       await loadRequirements();
       await loadCounts();
       await loadCaseModules();
+      await loadCaseSidebar();
       await loadReviewChecks();
+      await loadCaseDictionaries();
       setImportConfig(await getRequirementImportConfig());
     });
   }, []);
+
+  useEffect(() => {
+    if (activeTab?.key !== "cases") return;
+    runSafe(async () => {
+      await loadCaseModules();
+      await loadCaseSidebar();
+      await loadTestCases();
+    });
+  }, [activeTab?.key, currentCaseQuery]);
+
+  useEffect(() => {
+    setCasePagination((prev) => (prev.page === 1 ? prev : { ...prev, page: 1 }));
+  }, [caseFilters.caseType, caseFilters.keyword, caseFilters.priority, selectedCaseScope]);
 
   useEffect(() => {
     setDateInputTexts({
@@ -638,7 +857,7 @@ function App() {
 
   function openProjectEdit(item) {
     setEditingProjectId(item.id);
-    setProjectForm({ name: item.name, description: item.description, creator: item.creator || "admin" });
+      setProjectForm({ name: item.name, description: item.description, creator: item.creator || "" });
     setShowProjectModal(true);
   }
 
@@ -664,7 +883,7 @@ function App() {
   }
 
   function openImportModal() {
-    setReqImportForm({ ...DEFAULT_IMPORT_FORM, project: projectNames[0] || "" });
+    setReqImportForm({ ...DEFAULT_IMPORT_FORM, project_id: projects[0]?.id || "" });
     setReqImportFile(null);
     setShowReqImportModal(true);
   }
@@ -768,16 +987,28 @@ function App() {
     return requirementOptions.find((item) => item.id === requirementId)?.label || "";
   }
 
+  function getModuleLabel(moduleId) {
+    return caseModuleMap[moduleId]?.name || "";
+  }
+
+  function getCaseTargetValue(requirementId, moduleId) {
+    if (requirementId && requirementId !== MANUAL_CASE_REQUIREMENT_ID) return `req:${requirementId}`;
+    if (moduleId) return `module:${moduleId}`;
+    return "";
+  }
+
   function normalizeCaseFormPayload(form) {
-    const normalizedModule = form.module || getRequirementLabel(form.requirement_id);
+    const normalizedRequirementId =
+      form.requirement_id && form.requirement_id !== MANUAL_CASE_REQUIREMENT_ID ? form.requirement_id : "";
     const rows = (form.steps || []).filter((item) => item.step.trim() || item.expected.trim());
+    const testPointFallback = form.test_point.trim() || getModuleLabel(form.module_id) || getRequirementLabel(normalizedRequirementId);
     return {
-      requirement_id: form.requirement_id,
-      module: normalizedModule,
+      requirement_id: normalizedRequirementId,
+      module_id: normalizedRequirementId ? "" : (form.module_id || ""),
       case_type: form.case_type,
       stage: form.stage,
       title: form.title.trim(),
-      test_point: form.test_point.trim() || normalizedModule,
+      test_point: testPointFallback,
       preconditions: form.preconditions_text
         .split(/\r?\n/)
         .map((item) => item.trim())
@@ -785,23 +1016,23 @@ function App() {
       steps: rows.map((item) => item.step.trim()),
       expected: rows.map((item) => item.expected.trim()),
       priority: form.priority,
-      creator: form.creator || "admin",
+      creator: form.creator || "",
     };
   }
 
   function buildCaseFormFromItem(item = {}) {
-    const normalizedModule = item.module || getRequirementLabel(item.requirement_id);
     const rows = Math.max(item.steps?.length || 0, item.expected?.length || 0, 3);
     return {
-      requirement_id: item.requirement_id || "",
-      module: normalizedModule || "",
-      case_type: item.case_type || "功能测试",
+      requirement_id: item.requirement_id && item.requirement_id !== MANUAL_CASE_REQUIREMENT_ID ? item.requirement_id : "",
+      module_id: item.module_id || "",
+      target_key: getCaseTargetValue(item.requirement_id, item.module_id || ""),
+      case_type: item.case_type || "",
       stage: item.stage || "",
       title: item.title || "",
       test_point: item.test_point || "",
       preconditions_text: (item.preconditions || []).join("\n"),
-      priority: item.priority || "P2",
-      creator: item.creator || "admin",
+      priority: item.priority || "",
+      creator: item.creator || "",
       steps: Array.from({ length: rows }, (_, index) => ({
         id: item.id ? `${item.id}-${index}` : createCaseStep(index + 1).id,
         step: item.steps?.[index] || "",
@@ -812,8 +1043,11 @@ function App() {
 
   function openCaseEditor(mode, item = null) {
     if (mode === "create") {
-      const moduleName = caseModuleOptions[0] || "";
-      setCaseForm(createEmptyCaseForm("", moduleName));
+      const firstTarget = caseTargetOptions[0];
+      setCaseForm({
+        ...createEmptyCaseForm(firstTarget?.requirementId || "", firstTarget?.moduleId || ""),
+        target_key: firstTarget?.key || "",
+      });
       setEditingCaseId("");
     } else {
       setCaseForm(buildCaseFormFromItem(item || {}));
@@ -825,13 +1059,20 @@ function App() {
   function closeCaseEditor() {
     setCaseEditorMode("list");
     setEditingCaseId("");
-    setCaseForm(createEmptyCaseForm("", caseModuleOptions[0] || ""));
+    const firstTarget = caseTargetOptions[0];
+    setCaseForm({
+      ...createEmptyCaseForm(firstTarget?.requirementId || "", firstTarget?.moduleId || ""),
+      target_key: firstTarget?.key || "",
+    });
   }
 
-  function handleCaseRequirementChange(moduleName) {
+  function handleCaseRequirementChange(targetKey) {
+    const target = caseTargetOptions.find((item) => item.key === targetKey);
     setCaseForm((prev) => ({
       ...prev,
-      module: moduleName,
+      target_key: targetKey,
+      requirement_id: target?.requirementId || "",
+      module_id: target?.moduleId || "",
     }));
   }
 
@@ -877,7 +1118,7 @@ function App() {
 
   async function submitCaseForm() {
     const payload = normalizeCaseFormPayload(caseForm);
-    if (!payload.module) {
+    if (!payload.requirement_id && !payload.module_id) {
       setError("请选择所属模块");
       return;
     }
@@ -896,6 +1137,7 @@ function App() {
         await createTestCase(payload);
       }
       await loadTestCases();
+      await loadCaseSidebar();
       closeCaseEditor();
     });
   }
@@ -904,6 +1146,7 @@ function App() {
     await runSafe(async () => {
       await deleteTestCase(caseId);
       await loadTestCases();
+      await loadCaseSidebar();
       if (editingCaseId === caseId) closeCaseEditor();
     });
   }
@@ -939,6 +1182,7 @@ function App() {
         await createTestCaseModule(payload);
       }
       await loadCaseModules();
+      await loadCaseSidebar();
       setShowCaseModuleModal(false);
       setEditingCaseModuleId("");
     });
@@ -948,28 +1192,57 @@ function App() {
     await runSafe(async () => {
       await deleteTestCaseModule(moduleId);
       await loadCaseModules();
+      await loadCaseSidebar();
     });
   }
 
   function buildCaseModuleTree() {
-    const nodeMap = new Map(caseModules.map((item) => [item.id, { ...item, children: [] }]));
+    const countMap = {};
+    const collectCounts = (nodes = []) => {
+      nodes.forEach((node) => {
+        countMap[node.id] = node.count || 0;
+        collectCounts(node.children || []);
+      });
+    };
+    collectCounts(caseSidebarData.module_tree || []);
+
+    const nodeMap = Object.fromEntries(
+      caseModules.map((item) => [
+        item.id,
+        {
+          ...item,
+          count: countMap[item.id] || 0,
+          children: [],
+        },
+      ])
+    );
+
     const roots = [];
-    nodeMap.forEach((node) => {
-      if (node.parent_id && nodeMap.has(node.parent_id)) {
-        nodeMap.get(node.parent_id).children.push(node);
+    Object.values(nodeMap).forEach((node) => {
+      if (node.parent_id && nodeMap[node.parent_id]) {
+        nodeMap[node.parent_id].children.push(node);
       } else {
         roots.push(node);
       }
     });
+
+    const sortNodes = (nodes) => {
+      nodes.sort((a, b) => (
+        (a.sort_order || 0) - (b.sort_order || 0)
+        || String(a.name || "").localeCompare(String(b.name || ""))
+      ));
+      nodes.forEach((node) => sortNodes(node.children || []));
+    };
+    sortNodes(roots);
     return roots;
   }
 
-  function countCasesByModuleName(moduleName) {
-    return testCases.filter((item) => item.module === moduleName).length;
+  function buildRequirementCaseTree() {
+    return caseSidebarData.requirement_tree || { id: "requirement-root", name: "需求类", count: 0, children: [] };
   }
 
   function getTreeCaseCount(node) {
-    return countCasesByModuleName(node.name) + node.children.reduce((sum, child) => sum + getTreeCaseCount(child), 0);
+    return node.count || 0;
   }
 
   function toggleCaseModuleExpanded(moduleId) {
@@ -1089,6 +1362,257 @@ function App() {
     a.click();
     URL.revokeObjectURL(url);
   }
+  function getCaseExportScopeName() {
+    if (selectedCaseScope.kind === "module") return getModuleLabel(selectedCaseScope.value) || "未命名模块";
+    if (selectedCaseScope.kind === "requirement") return getRequirementLabel(selectedCaseScope.value) || "未命名需求";
+    if (selectedCaseScope.kind === "project") return projectMap[selectedCaseScope.value]?.name || "未命名项目";
+    if (selectedCaseScope.kind === "requirement_root") return "需求树";
+    return "全部用例";
+  }
+
+  function formatExportList(value) {
+    if (Array.isArray(value)) {
+      const items = value
+        .map((item, index) => `${index + 1}. ${String(item || "").trim()}`)
+        .filter((entry) => !entry.endsWith(". "));
+      return items.length ? items.join("\n") : "-";
+    }
+    const textValue = String(value || "").trim();
+    return textValue || "-";
+  }
+
+  function buildCaseExportRow(item, index) {
+    const requirement = requirementMap[item.requirement_id] || null;
+    const priorityLabel = casePriorityLabelMap[item.priority] || item.priority || "-";
+    const caseTypeLabel = caseTypeOptions.find((option) => option.key === item.case_type)?.value || item.case_type_label || item.case_type || "-";
+    const systemName = requirement?.project || projectMap[requirement?.project_id || ""]?.name || "-";
+    return {
+      serial: index + 1,
+      system_name: systemName,
+      module_name: item.module_name || getModuleLabel(item.module_id) || getRequirementLabel(item.requirement_id) || "-",
+      requirement_no: item.requirement_id && item.requirement_id !== MANUAL_CASE_REQUIREMENT_ID ? item.requirement_id : "-",
+      requirement_name: getRequirementLabel(item.requirement_id) || "-",
+      title: item.title || "-",
+      preconditions_text: formatExportList(item.preconditions),
+      steps_text: formatExportList(item.steps),
+      expected_text: formatExportList(item.expected),
+      priority_label: priorityLabel,
+      case_type: caseTypeLabel,
+      stage: item.stage || "-",
+      test_data: "",
+      actual_result: "",
+      test_status: item.review_status || "",
+      test_point: item.test_point || "-",
+      creator: item.creator || "-",
+      created_at: (item.created_at || "").replace("T", " ").replace("Z", "") || "-",
+    };
+  }
+
+  function renderExportCell(value) {
+    return escapeHtml(String(value ?? "-")).replaceAll("\n", "<br />");
+  }
+
+  function getSelectedCaseExportColumns() {
+    return caseExportFields
+      .map((key) => CASE_EXPORT_FIELD_COLUMNS.find((item) => item.key === key) || (CASE_EXPORT_FIELD_LABEL_MAP[key] ? { key, label: CASE_EXPORT_FIELD_LABEL_MAP[key] } : null))
+      .filter(Boolean);
+  }
+
+  function moveCaseExportField(key, direction) {
+    setCaseExportFields((prev) => {
+      const index = prev.indexOf(key);
+      const nextIndex = direction === "up" ? index - 1 : index + 1;
+      if (index < 0 || nextIndex < 0 || nextIndex >= prev.length) return prev;
+      const next = [...prev];
+      const [field] = next.splice(index, 1);
+      next.splice(nextIndex, 0, field);
+      return next;
+    });
+  }
+
+  function reorderCaseExportField(sourceKey, targetKey) {
+    if (!sourceKey || !targetKey || sourceKey === targetKey) return;
+    setCaseExportFields((prev) => {
+      const sourceIndex = prev.indexOf(sourceKey);
+      const targetIndex = prev.indexOf(targetKey);
+      if (sourceIndex < 0 || targetIndex < 0) return prev;
+      const next = [...prev];
+      const [field] = next.splice(sourceIndex, 1);
+      next.splice(targetIndex, 0, field);
+      return next;
+    });
+  }
+
+  function toggleCaseExportField(key) {
+    setCaseExportFields((prev) => {
+      if (prev.includes(key)) {
+        if (prev.length === 1) return prev;
+        return prev.filter((item) => item !== key);
+      }
+      return [...prev, key];
+    });
+  }
+
+  function resetCaseExportConfig(format = caseExportFormat) {
+    setCaseExportFields(getDefaultCaseExportFields(format));
+    setCaseExportStyle(cloneCaseExportStyle(format));
+    setDraggingCaseExportField("");
+    setShowCaseExportFieldMenu(false);
+  }
+
+  function buildExcelExportDocument(rows, scopeName, generatedAt, style, columns) {
+    const headerHtml = columns.map((item) => `<th>${escapeHtml(item.label)}</th>`).join("");
+    const bodyHtml = rows.map((row) => `<tr>${columns.map((col) => `<td>${renderExportCell(row[col.key])}</td>`).join("")}</tr>`).join("");
+    return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+body { font-family: "Microsoft YaHei", sans-serif; color: ${style.bodyText}; margin: 0; }
+.export-shell { padding: 16px; }
+.export-title { font-size: ${style.titleSize}px; font-weight: 700; margin: 0 0 12px; color: ${style.titleColor}; }
+.export-meta { margin: 0 0 16px; color: ${style.metaColor}; font-size: ${style.bodySize}px; }
+table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+th, td { border: 1px solid ${style.borderColor}; padding: 10px 8px; vertical-align: top; word-break: break-word; }
+th { background: ${style.headerBg}; color: ${style.headerText}; font-weight: 700; text-align: left; font-size: ${style.headerSize}px; }
+td { background: #ffffff; color: ${style.bodyText}; white-space: pre-wrap; line-height: 1.7; font-size: ${style.bodySize}px; }
+</style>
+</head>
+<body>
+<div class="export-shell">
+  <div class="export-title">${escapeHtml(style.titleText || "用例导出")}</div>
+  <div class="export-meta">导出范围：${escapeHtml(scopeName)} | 导出时间：${escapeHtml(generatedAt)} | 共 ${rows.length} 条</div>
+  <table><thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody></table>
+</div>
+</body>
+</html>`;
+  }
+
+  function renderWordFieldCells(label, value) {
+    return `<tr><td class="case-label" style="width: 14%;">${escapeHtml(label)}</td><td class="case-value case-rich" colspan="3">${renderExportCell(value)}</td></tr>`;
+  }
+
+  function buildWordExportDocument(rows, style) {
+    const cardsHtml = rows.map((row) => `
+      <section class="case-card">
+        <div class="case-title"><span class="case-title-index">${escapeHtml(style.titleText || "????")} ${row.serial}:</span><span class="case-title-link">${escapeHtml(row.title || "-")}</span></div>
+        <table class="case-table">
+          <tr>
+            <td class="case-label" style="width: 14%;">????</td>
+            <td class="case-value" colspan="3">${renderExportCell(row.title)}</td>
+          </tr>
+          <tr>
+            <td class="case-label">????</td>
+            <td class="case-value">${renderExportCell(row.case_type)}</td>
+            <td class="case-label">????</td>
+            <td class="case-value">${renderExportCell(row.priority_label)}</td>
+          </tr>
+          <tr>
+            <td class="case-label">????</td>
+            <td class="case-value">${renderExportCell(row.preconditions_text)}</td>
+            <td class="case-label">????</td>
+            <td class="case-value">${renderExportCell(row.test_data || "")}</td>
+          </tr>
+          <tr>
+            <td class="case-label">?????</td>
+            <td class="case-label">??????</td>
+            <td class="case-label">?????</td>
+            <td class="case-label">?????</td>
+          </tr>
+          <tr>
+            <td class="case-value case-rich">${renderExportCell(row.test_point)}</td>
+            <td class="case-value case-rich">${renderExportCell(row.steps_text)}</td>
+            <td class="case-value case-rich">${renderExportCell(row.expected_text)}</td>
+            <td class="case-value case-rich">${renderExportCell(row.actual_result || "")}</td>
+          </tr>
+          <tr>
+            <td class="case-label">????</td>
+            <td class="case-value">${renderExportCell(row.test_status || "")}</td>
+            <td class="case-label"></td>
+            <td class="case-value"></td>
+          </tr>
+        </table>
+      </section>
+      <div class="case-gap"></div>
+    `).join("");
+    return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+body { font-family: "Microsoft YaHei", sans-serif; color: ${style.bodyText}; margin: 0; }
+.export-shell { padding: 12px; }
+.case-card { margin: 0; page-break-inside: avoid; }
+.case-gap { height: 28px; }
+.case-title { font-size: ${style.titleSize}px; font-weight: 700; margin: 0 0 16px; }
+.case-title-index { color: #111827; margin-right: 8px; }
+.case-title-link { color: ${style.titleColor}; text-decoration: underline; }
+.case-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.case-table td { border: 1px solid ${style.borderColor}; padding: 10px 14px; font-size: ${style.bodySize}px; vertical-align: top; word-break: break-word; }
+.case-label { background: ${style.headerBg}; color: ${style.headerText}; font-weight: 700; text-align: left; font-size: ${style.headerSize}px; }
+.case-value { background: #ffffff; color: ${style.bodyText}; }
+.case-rich { white-space: pre-wrap; line-height: 1.8; }
+</style>
+</head>
+<body>
+<div class="export-shell">${cardsHtml}</div>
+</body>
+</html>`;
+  }
+
+  function getCaseExportPreviewHtml() {
+    const columns = getSelectedCaseExportColumns();
+    const sampleRows = [CASE_EXPORT_SAMPLE_ROW];
+    if (caseExportFormat === "excel") {
+      return buildExcelExportDocument(sampleRows, "预览范围", "2026-03-20 10:00:00", caseExportStyle, columns);
+    }
+    return buildWordExportDocument(sampleRows, caseExportStyle);
+  }
+
+  async function loadAllCasesForExport() {
+    const pageSize = 1000;
+    let page = 1;
+    let items = [];
+    let total = 0;
+    while (true) {
+      const result = await getTestCases({ ...currentCaseQuery, page, page_size: pageSize });
+      const pageItems = result.items || [];
+      items = items.concat(pageItems);
+      total = result.total || items.length;
+      if (items.length >= total || pageItems.length === 0) break;
+      page += 1;
+    }
+    return items;
+  }
+
+  async function submitCaseExport() {
+    setExportingCases(true);
+    setError("");
+    try {
+      const items = await loadAllCasesForExport();
+      const rows = items.map(buildCaseExportRow);
+      const generatedAt = new Date().toLocaleString("zh-CN", { hour12: false });
+      const scopeName = getCaseExportScopeName();
+      const columns = getSelectedCaseExportColumns();
+      const output = caseExportFormat === "excel"
+        ? buildExcelExportDocument(rows, scopeName, generatedAt, caseExportStyle, columns)
+        : buildWordExportDocument(rows, caseExportStyle);
+      const blob = new Blob([`﻿${output}`], {
+        type: caseExportFormat === "excel" ? "application/vnd.ms-excel;charset=utf-8;" : "application/msword;charset=utf-8;",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `cases-export-${Date.now()}.${caseExportFormat === "excel" ? "xls" : "doc"}`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setShowCaseExportModal(false);
+    } catch (e) {
+      setError(e.message || "导出失败");
+    } finally {
+      setExportingCases(false);
+    }
+  }
 
   function renderProjects() {
     const pageCount = Math.max(1, Math.ceil(projectTotal / projectFilters.page_size));
@@ -1108,7 +1632,7 @@ function App() {
             <thead><tr><th>{"序号"}</th><th>{"项目名称"}</th><th>{"项目描述"}</th><th>{"创建人"}</th><th>{"创建时间"}</th><th>{"操作"}</th></tr></thead>
             <tbody>
               {projects.length === 0 && <tr><td colSpan="6" className="empty">{"暂无数据"}</td></tr>}
-              {projects.map((item, idx) => <tr key={item.id}><td>{(projectFilters.page - 1) * projectFilters.page_size + idx + 1}</td><td>{item.name}</td><td>{item.description || "无描述"}</td><td>{item.creator || "admin"}</td><td>{item.created_at?.replace("T", " ").slice(0, 19)}</td><td><button className="mini-btn" onClick={() => openProjectEdit(item)}>{"编辑"}</button><button className="mini-btn danger" onClick={() => removeProject(item.id)}>{"删除"}</button></td></tr>)}
+              {projects.map((item, idx) => <tr key={item.id}><td>{(projectFilters.page - 1) * projectFilters.page_size + idx + 1}</td><td>{item.name}</td><td>{item.description || "无描述"}</td><td>{item.creator || ""}</td><td>{item.created_at?.replace("T", " ").slice(0, 19)}</td><td><button className="mini-btn" onClick={() => openProjectEdit(item)}>{"编辑"}</button><button className="mini-btn danger" onClick={() => removeProject(item.id)}>{"删除"}</button></td></tr>)}
             </tbody>
           </table>
           <div className="pagination right"><div>{"共 "}{projectTotal}{" 条"}</div><div className="pagination-actions"><button className="btn ghost" disabled={projectFilters.page <= 1} onClick={() => runSafe(() => loadProjects({ page: projectFilters.page - 1 }))}>{"上一页"}</button><span>{projectFilters.page}</span><button className="btn ghost" disabled={projectFilters.page >= pageCount} onClick={() => runSafe(() => loadProjects({ page: projectFilters.page + 1 }))}>{"下一页"}</button><select value={projectFilters.page_size} onChange={(e) => runSafe(() => loadProjects({ page: 1, page_size: Number(e.target.value) }))}><option value={10}>{"10 条/页"}</option><option value={20}>{"20 条/页"}</option><option value={50}>{"50 条/页"}</option></select></div></div>
@@ -1183,7 +1707,7 @@ function App() {
       <>
         <section className="panel requirement-search-row">
           <div className="date-filter"><label>{"创建时间"}</label><div className="date-range-field"><div className="date-input-wrap" ref={(node) => { datePanelRefs.current.start_date = node; }}><input className="date-display-input" type="text" value={dateInputTexts.start_date} onChange={(e) => changeDateInputText("start_date", e.target.value)} onBlur={() => commitDateInput("start_date")} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commitDateInput("start_date"); } }} />{reqFilters.start_date && <button type="button" className="date-clear-btn" onClick={(e) => { e.stopPropagation(); clearDateFilter("start_date"); }}>&times;</button>}<button type="button" className="date-picker-btn" aria-label={"选择开始时间"} onClick={() => openDatePicker("start_date")} />{activeDatePanel === "start_date" && renderDatePicker("start_date")}</div><span className="dash">~</span><div className="date-input-wrap" ref={(node) => { datePanelRefs.current.end_date = node; }}><input className="date-display-input" type="text" value={dateInputTexts.end_date} onChange={(e) => changeDateInputText("end_date", e.target.value)} onBlur={() => commitDateInput("end_date")} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commitDateInput("end_date"); } }} />{reqFilters.end_date && <button type="button" className="date-clear-btn" onClick={(e) => { e.stopPropagation(); clearDateFilter("end_date"); }}>&times;</button>}<button type="button" className="date-picker-btn" aria-label={"选择结束时间"} onClick={() => openDatePicker("end_date")} />{activeDatePanel === "end_date" && renderDatePicker("end_date")}</div></div></div>
-          <div className="compact-field project-field"><label>{"项目"}</label><select value={reqFilters.project} onChange={(e) => setReqFilters((prev) => ({ ...prev, project: e.target.value }))}><option value="">{"全部项目"}</option>{projects.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select></div>
+          <div className="compact-field project-field"><label>{"项目"}</label><select value={reqFilters.project_id} onChange={(e) => setReqFilters((prev) => ({ ...prev, project_id: e.target.value }))}><option value="">{"全部项目"}</option>{projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
           <div className="compact-field status-field"><label>{"评审状态"}</label><select value={reqFilters.review_status} onChange={(e) => setReqFilters((prev) => ({ ...prev, review_status: e.target.value }))}><option value="">{"全部"}</option><option value={"待评审"}>{"未开始"}</option><option value={"评审中"}>{"进行中"}</option><option value={"评审完成"}>{"已完成"}</option></select></div>
           <div className="compact-field creator-field"><label>{"创建人"}</label><input value={reqFilters.creator} placeholder={"全部"} onChange={(e) => setReqFilters((prev) => ({ ...prev, creator: e.target.value }))} /></div>
           <div className="compact-field keyword-box"><input value={reqFilters.keyword} placeholder={"输入标题"} onChange={(e) => setReqFilters((prev) => ({ ...prev, keyword: e.target.value }))} /></div>
@@ -1380,7 +1904,8 @@ function App() {
 
   function renderCasesSidebar() {
     const moduleTree = buildCaseModuleTree();
-    const allCount = testCases.length;
+    const requirementTree = buildRequirementCaseTree();
+    const allCount = caseSidebarData.all_count || 0;
     const keyword = caseModuleKeyword.trim().toLowerCase();
 
     function matchesModuleKeyword(node) {
@@ -1389,13 +1914,26 @@ function App() {
       return node.children.some((child) => matchesModuleKeyword(child));
     }
 
-    function renderModuleNode(node, depth = 0) {
-      const count = getTreeCaseCount(node);
+    function renderModuleNode(node, depth = 0, kind = "module") {
+      const count = kind === "module" ? getTreeCaseCount(node) : node.count || 0;
       const expanded = expandedCaseModuleIds[node.id] !== false;
       const hasChildren = node.children.length > 0;
+      const active =
+        (kind === "module" && selectedCaseScope.kind === "module" && selectedCaseScope.value === node.id)
+        || (kind === "project" && selectedCaseScope.kind === "project" && selectedCaseScope.value === (node.project_id || node.projectId))
+        || (kind === "requirement" && selectedCaseScope.kind === "requirement" && selectedCaseScope.value === (node.requirement_id || node.requirementId))
+        || (kind === "requirement_root" && selectedCaseScope.kind === "requirement_root");
+
+      function handleSelect() {
+        if (kind === "module") setSelectedCaseScope({ kind: "module", value: node.id });
+        if (kind === "project") setSelectedCaseScope({ kind: "project", value: node.project_id || node.projectId || "" });
+        if (kind === "requirement") setSelectedCaseScope({ kind: "requirement", value: node.requirement_id || node.requirementId || "" });
+        if (kind === "requirement_root") setSelectedCaseScope({ kind: "requirement_root", value: "" });
+      }
+
       return (
         <div key={node.id} className="cases-tree-node">
-          <div className={selectedCaseModule === node.name ? "cases-tree-row active" : "cases-tree-row"} style={{ paddingLeft: `${8 + depth * 18}px` }}>
+          <div className={active ? "cases-tree-row active" : "cases-tree-row"} style={{ paddingLeft: `${8 + depth * 18}px` }}>
             <button
               type="button"
               className={hasChildren ? "cases-tree-toggle" : "cases-tree-toggle placeholder"}
@@ -1406,20 +1944,32 @@ function App() {
             <button
               type="button"
               className="cases-tree-label"
-              onClick={() => setSelectedCaseModule(node.name)}
+              onClick={handleSelect}
             >
               <span>{`${node.name}(${count})`}</span>
             </button>
-            <div className="cases-tree-actions">
-              <button type="button" className="cases-tree-icon-btn" onClick={() => openCaseModuleEditModal(node)} title="编辑">
-                ✎
-              </button>
-              <button type="button" className="cases-tree-icon-btn danger" onClick={() => removeCaseModule(node.id)} title="删除">
-                ×
-              </button>
-            </div>
+            {kind === "module" && (
+              <div className="cases-tree-actions">
+                <button type="button" className="cases-tree-icon-btn" onClick={() => openCaseModuleEditModal(node)} title="编辑">
+                  ✎
+                </button>
+                <button type="button" className="cases-tree-icon-btn danger" onClick={() => removeCaseModule(node.id)} title="删除">
+                  ×
+                </button>
+              </div>
+            )}
           </div>
-          {hasChildren && expanded && <div className="cases-tree-children">{node.children.map((child) => renderModuleNode(child, depth + 1))}</div>}
+          {hasChildren && expanded && (
+            <div className="cases-tree-children">
+              {node.children.map((child) =>
+                renderModuleNode(
+                  child,
+                  depth + 1,
+                  kind === "requirement_root" ? "project" : kind === "project" ? "requirement" : "module"
+                )
+              )}
+            </div>
+          )}
         </div>
       );
     }
@@ -1427,45 +1977,89 @@ function App() {
     return (
       <aside className="panel cases-module-panel">
         <div className="cases-module-head">
-          <div className="cases-panel-title">模块管理</div>
-          <div className="cases-panel-subtitle">按所属模块快速筛选用例</div>
+          <div>
+            <div className="cases-panel-title">模块管理</div>
+            <div className="cases-panel-subtitle">按所属模块快速筛选用例</div>
+          </div>
+          <button
+            type="button"
+            className="cases-sidebar-toggle"
+            onClick={() => setCaseSidebarCollapsed((prev) => !prev)}
+            aria-label="收起模块管理"
+            title="收起模块管理"
+          >
+            ◀
+          </button>
         </div>
         <div className="cases-module-search">
           <input
             value={caseModuleKeyword}
             onChange={(event) => setCaseModuleKeyword(event.target.value)}
-            placeholder="请输入模块名称"
+            placeholder="???????"
           />
         </div>
         <button type="button" className="btn action small cases-module-add-btn" onClick={openCaseModuleModal}>
-          新增
+          ??
         </button>
         <div className="cases-module-tree">
-          <div className={!selectedCaseModule ? "cases-tree-row active active-all" : "cases-tree-row active-all"}>
+          <div className={selectedCaseScope.kind === "all" ? "cases-tree-row active active-all" : "cases-tree-row active-all"}>
             <button type="button" className="cases-tree-toggle placeholder" />
-            <button type="button" className="cases-tree-label" onClick={() => setSelectedCaseModule("")}>
-              <span>{`全部(${allCount})`}</span>
+            <button type="button" className="cases-tree-label" onClick={() => setSelectedCaseScope({ kind: "all", value: "" })}>
+              <span>{`??(${allCount})`}</span>
             </button>
           </div>
-          {moduleTree.length === 0 && <div className="empty-tip">暂无分组</div>}
+          {requirementTree.count > 0 && matchesModuleKeyword(requirementTree) && renderModuleNode(requirementTree, 0, "requirement_root")}
+          {moduleTree.length === 0 && requirementTree.count === 0 && <div className="empty-tip">????</div>}
           {moduleTree.filter((node) => matchesModuleKeyword(node)).map((node) => renderModuleNode(node))}
         </div>
       </aside>
     );
   }
 
-  function renderCasesLayout(rightContent) {
+  function renderCasesLayout(rightContent, options = {}) {
+    const { editorMode = false } = options;
+    const layoutClass = [
+      "cases-layout",
+      caseSidebarCollapsed ? "sidebar-collapsed" : "",
+      editorMode ? "editor-mode" : "list-mode",
+    ].filter(Boolean).join(" ");
+    const mainClass = [
+      "cases-main",
+      editorMode ? "cases-main-editor" : "cases-main-list",
+    ].join(" ");
+
     return (
       <section className="cases-page">
-        <div className="cases-layout">
-          {renderCasesSidebar()}
-          <div className="cases-main">{rightContent}</div>
+        <div className={layoutClass}>
+          {!caseSidebarCollapsed && renderCasesSidebar()}
+          <div className={mainClass}>
+            {caseSidebarCollapsed && !editorMode && (
+              <button
+                type="button"
+                className="cases-sidebar-expand"
+                onClick={() => setCaseSidebarCollapsed(false)}
+                aria-label="展开模块管理"
+                title="展开模块管理"
+              >
+                ▶ 模块管理
+              </button>
+            )}
+            {rightContent}
+          </div>
         </div>
       </section>
     );
   }
 
+
+  function openStandaloneCaseGenerator() {
+    const key = "case-generator";
+    setOpenTabs((prev) => (prev.some((tab) => tab.key === key) ? prev : [...prev, { key, label: "\u751f\u6210\u7528\u4f8b", type: "caseGenerator" }]));
+    setActiveTabKey(key);
+  }
+
   function renderCaseList() {
+    const casePageCount = Math.max(1, Math.ceil(caseCount / casePagination.page_size));
     return renderCasesLayout(
       <>
         <section className="panel cases-toolbar-panel">
@@ -1482,9 +2076,9 @@ function App() {
                     onChange={(event) => setCaseFilters((prev) => ({ ...prev, priority: event.target.value }))}
                   >
                     <option value="">筛选优先级</option>
-                    {CASE_PRIORITY_OPTIONS.map((item) => (
-                      <option key={item} value={item}>
-                        {item}
+                    {casePriorityOptions.map((item) => (
+                      <option key={item.key} value={item.key}>
+                        {`${item.key} - ${item.value}`}
                       </option>
                     ))}
                   </select>
@@ -1493,9 +2087,9 @@ function App() {
                     onChange={(event) => setCaseFilters((prev) => ({ ...prev, caseType: event.target.value }))}
                   >
                     <option value="">筛选测试类型</option>
-                    {CASE_TYPE_OPTIONS.map((item) => (
-                      <option key={item} value={item}>
-                        {item}
+                    {caseTypeOptions.map((item) => (
+                      <option key={item.key} value={item.key}>
+                        {item.value}
                       </option>
                     ))}
                   </select>
@@ -1503,6 +2097,9 @@ function App() {
                 <div className="cases-action-row">
                   <button type="button" className="btn ghost" onClick={() => openModule("requirements")}>
                     生成用例
+                  </button>
+                  <button type="button" className="btn export" onClick={() => setShowCaseExportModal(true)}>
+                    导出
                   </button>
                   <button type="button" className="btn action" onClick={() => openCaseEditor("create")}>
                     添加用例
@@ -1512,57 +2109,91 @@ function App() {
         </section>
 
         <section className="panel cases-table-panel">
-          <table className="data-table cases-table">
-            <thead>
-              <tr>
-                <th>序号</th>
-                <th>测试点</th>
-                <th>用例名称</th>
-                <th>优先级</th>
-                <th>测试类型</th>
-                <th>所属模块</th>
-                <th>创建者</th>
-                <th>创建时间</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredTestCases.length === 0 && (
+          <div className="cases-table-scroll">
+            <table className="data-table cases-table">
+              <thead>
                 <tr>
-                  <td colSpan={9} className="empty-cell">
-                    暂无数据
-                  </td>
+                  <th>序号</th>
+                  <th>测试点</th>
+                  <th>用例名称</th>
+                  <th>优先级</th>
+                  <th>测试类型</th>
+                  <th>所属模块</th>
+                  <th>创建者</th>
+                  <th>创建时间</th>
+                  <th>操作</th>
                 </tr>
-              )}
-              {filteredTestCases.map((item, index) => (
-                <tr key={item.id}>
-                  <td>{index + 1}</td>
-                  <td>{item.test_point || "-"}</td>
-                  <td className="cases-title-cell">{item.title}</td>
-                  <td>
-                    <span className={`priority-chip ${String(item.priority || "P2").toLowerCase()}`}>{item.priority || "P2"}</span>
-                  </td>
-                  <td>{item.case_type || "-"}</td>
-                  <td>{item.module || getRequirementLabel(item.requirement_id) || "-"}</td>
-                  <td>{item.creator || "admin"}</td>
-                  <td>{(item.created_at || "").replace("T", " ").replace("Z", "") || "-"}</td>
-                  <td>
-                    <div className="cases-row-actions">
-                      <button type="button" className="mini-btn" onClick={() => openCaseEditor("view", item)}>
-                        查看
-                      </button>
-                      <button type="button" className="mini-btn primary" onClick={() => openCaseEditor("edit", item)}>
-                        编辑
-                      </button>
-                      <button type="button" className="mini-btn danger" onClick={() => removeCaseItem(item.id)}>
-                        删除
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {testCases.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="empty-cell">
+                      暂无数据
+                    </td>
+                  </tr>
+                )}
+                {testCases.map((item, index) => (
+                  <tr key={item.id}>
+                    <td>{(casePagination.page - 1) * casePagination.page_size + index + 1}</td>
+                    <td>{item.test_point || "-"}</td>
+                    <td className="cases-title-cell">{item.title}</td>
+                    <td>
+                      {item.priority ? (
+                        <span className={`priority-chip ${String(item.priority).toLowerCase()}`}>
+                          {casePriorityLabelMap[item.priority] ? `${item.priority} - ${casePriorityLabelMap[item.priority]}` : item.priority}
+                        </span>
+                      ) : ""}
+                    </td>
+                    <td>{caseTypeOptions.find((option) => option.key === item.case_type)?.value || item.case_type_label || item.case_type || "-"}</td>
+                    <td>{item.module_name || getModuleLabel(item.module_id) || getRequirementLabel(item.requirement_id) || "-"}</td>
+                    <td>{item.creator || ""}</td>
+                    <td>{(item.created_at || "").replace("T", " ").replace("Z", "") || "-"}</td>
+                    <td>
+                      <div className="cases-row-actions">
+                        <button type="button" className="mini-btn" onClick={() => openCaseEditor("view", item)}>
+                          查看
+                        </button>
+                        <button type="button" className="mini-btn primary" onClick={() => openCaseEditor("edit", item)}>
+                          编辑
+                        </button>
+                        <button type="button" className="mini-btn danger" onClick={() => removeCaseItem(item.id)}>
+                          删除
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="pagination">
+            <div>{"共 "}{caseCount}{" 条"}</div>
+            <div className="pagination-actions">
+              <button
+                className="btn ghost"
+                disabled={casePagination.page <= 1}
+                onClick={() => runSafe(() => loadTestCases({ page: casePagination.page - 1 }))}
+              >
+                {"上一页"}
+              </button>
+              <span>{casePagination.page} / {casePageCount}</span>
+              <button
+                className="btn ghost"
+                disabled={casePagination.page >= casePageCount}
+                onClick={() => runSafe(() => loadTestCases({ page: casePagination.page + 1 }))}
+              >
+                {"下一页"}
+              </button>
+              <select
+                value={casePagination.page_size}
+                onChange={(e) => runSafe(() => loadTestCases({ page: 1, page_size: Number(e.target.value) }))}
+              >
+                <option value={10}>{"10 条/页"}</option>
+                <option value={20}>{"20 条/页"}</option>
+                <option value={50}>{"50 条/页"}</option>
+              </select>
+            </div>
+          </div>
         </section>
       </>
     );
@@ -1587,13 +2218,22 @@ function App() {
             <div className="cases-editor-row">
               <label className="cases-inline-field cases-inline-field-wide">
                 <span>所属模块</span>
-                <select value={caseForm.module} onChange={(event) => handleCaseRequirementChange(event.target.value)} disabled={readonly}>
+                <select value={caseForm.target_key || getCaseTargetValue(caseForm.requirement_id, caseForm.module_id)} onChange={(event) => handleCaseRequirementChange(event.target.value)} disabled={readonly}>
                   <option value="">请选择所属模块</option>
-                  {caseModuleOptions.map((item) => (
-                    <option key={item} value={item}>
-                      {item}
-                    </option>
-                  ))}
+                  <optgroup label="需求类">
+                    {requirementCaseTargets.map((item) => (
+                      <option key={item.key} value={item.key}>
+                        {item.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="自定义分组">
+                    {customCaseTargets.map((item) => (
+                      <option key={item.key} value={item.key}>
+                        {item.label}
+                      </option>
+                    ))}
+                  </optgroup>
                 </select>
               </label>
               <label className="cases-inline-field">
@@ -1621,9 +2261,10 @@ function App() {
                   onChange={(event) => setCaseForm((prev) => ({ ...prev, case_type: event.target.value }))}
                   disabled={readonly}
                 >
-                  {CASE_TYPE_OPTIONS.map((item) => (
-                    <option key={item} value={item}>
-                      {item}
+                  <option value="">请选择用例类型</option>
+                  {caseTypeOptions.map((item) => (
+                    <option key={item.key} value={item.key}>
+                      {item.value}
                     </option>
                   ))}
                 </select>
@@ -1635,9 +2276,10 @@ function App() {
                   onChange={(event) => setCaseForm((prev) => ({ ...prev, priority: event.target.value }))}
                   disabled={readonly}
                 >
-                  {CASE_PRIORITY_OPTIONS.map((item) => (
-                    <option key={item} value={item}>
-                      {item}
+                  <option value="">请选择优先级</option>
+                  {casePriorityOptions.map((item) => (
+                    <option key={item.key} value={item.key}>
+                      {`${item.key} - ${item.value}`}
                     </option>
                   ))}
                 </select>
@@ -1748,7 +2390,8 @@ function App() {
             </div>
           </div>
         </section>
-      </>
+      </>,
+      { editorMode: true }
     );
   }
 
@@ -1760,6 +2403,7 @@ function App() {
     if (!activeTab) return null;
     if (activeTab.type === "review") return renderReviewPage(activeTab.requirementId);
     if (activeTab.type === "caseWorkflow") return <TestCaseWorkflowPage requirementId={activeTab.requirementId} onBack={() => setActiveTabKey("requirements")} onCasesChanged={loadCounts} />;
+    if (activeTab.type === "caseGenerator") return renderCasesLayout(<StandaloneCaseGeneratorPage onCasesChanged={loadCounts} />, { editorMode: true });
     if (activeTab.key === "projects") return renderProjects();
     if (activeTab.key === "requirements") return renderRequirements();
     if (activeTab.key === "cases") return caseEditorMode === "list" ? renderCaseList() : renderCaseEditor();
@@ -1776,9 +2420,110 @@ function App() {
 
       {showProjectModal && <div className="modal-mask" onClick={() => setShowProjectModal(false)}><div className="modal-card compact" onClick={(e) => e.stopPropagation()}><div className="modal-header"><h3>{editingProjectId ? "编辑项目" : "新增项目"}</h3><button className="modal-close" onClick={() => setShowProjectModal(false)}>x</button></div><div className="modal-body"><label><span className="required">*</span>{"项目名称"}</label><input placeholder="请输入项目名称" value={projectForm.name} onChange={(e) => setProjectForm((prev) => ({ ...prev, name: e.target.value }))} /><label>{"项目描述"}</label><textarea rows={4} placeholder="请输入项目描述" value={projectForm.description} onChange={(e) => setProjectForm((prev) => ({ ...prev, description: e.target.value }))} /></div><div className="modal-footer"><button className="btn ghost" onClick={() => setShowProjectModal(false)}>{"取消"}</button><button className="btn action" onClick={submitProject} disabled={!projectForm.name}>{"确定"}</button></div></div></div>}
 
-      {showReqImportModal && <div className="modal-mask" onClick={() => setShowReqImportModal(false)}><div className="modal-card requirement-modal" onClick={(e) => e.stopPropagation()}><div className="modal-header"><h3>{"上传需求文档"}</h3><button className="modal-close" onClick={() => setShowReqImportModal(false)}>x</button></div><div className="modal-body requirement-body"><label><span className="required">*</span>{"所属项目"}</label><select value={reqImportForm.project} onChange={(e) => setReqImportForm((prev) => ({ ...prev, project: e.target.value }))}>{projectNames.length === 0 && <option value="">{"请先创建项目"}</option>}{projectNames.map((name) => <option key={name} value={name}>{name}</option>)}</select><label>{"需求标题"}</label><input value={reqImportForm.title} placeholder="可选，不填时默认使用文档名称" onChange={(e) => setReqImportForm((prev) => ({ ...prev, title: e.target.value }))} /><label>{"上传方式"}</label><div className="radio-row"><label className="radio-item"><input type="radio" checked={reqImportForm.import_method === "file"} onChange={() => setReqImportForm((prev) => ({ ...prev, import_method: "file", jira_url: "" }))} /> {"上传文件"}</label><label className="radio-item"><input type="radio" checked={reqImportForm.import_method === "jira"} onChange={() => setReqImportForm((prev) => ({ ...prev, import_method: "jira" }))} /> {"Jira 链接"}</label></div>{reqImportForm.import_method === "file" ? <><label><span className="required">*</span>{"选择文件"}</label><label className="upload-dropzone"><input type="file" className="hidden-input" accept={importConfig.upload_extensions?.join(",") || ".pdf,.doc,.docx,.txt,.md"} onChange={(e) => handleImportFile(e.target.files?.[0] || null)} /><div className="upload-icon">{"上传"}</div><div className="upload-title">{"点击上传文件"}</div><div className="upload-desc">{"支持 PDF、Word(.doc/.docx)、TXT、Markdown"}</div>{reqImportFile && <div className="upload-file-name">{`已选择：${reqImportFile.name}`}</div>}</label></> : <><label><span className="required">*</span>{"Jira 链接"}</label><input value={reqImportForm.jira_url} placeholder="请输入 Jira Issue 或页面链接" onChange={(e) => setReqImportForm((prev) => ({ ...prev, jira_url: e.target.value }))} /><div className="policy-tip">{`允许域名：${importConfig.sources?.jira?.allowed_hosts?.join("、") || "未配置"}`}</div></>}</div><div className="modal-footer"><button className="btn ghost" onClick={() => setShowReqImportModal(false)}>{"取消"}</button><button className="btn action" onClick={submitRequirementImport} disabled={!reqImportForm.project || (reqImportForm.import_method === "file" ? !reqImportFile : !reqImportForm.jira_url)}>{"确定"}</button></div></div></div>}
+      {showReqImportModal && <div className="modal-mask" onClick={() => setShowReqImportModal(false)}><div className="modal-card requirement-modal" onClick={(e) => e.stopPropagation()}><div className="modal-header"><h3>{"上传需求文档"}</h3><button className="modal-close" onClick={() => setShowReqImportModal(false)}>x</button></div><div className="modal-body requirement-body"><label><span className="required">*</span>{"所属项目"}</label><select value={reqImportForm.project_id} onChange={(e) => setReqImportForm((prev) => ({ ...prev, project_id: e.target.value }))}>{projects.length === 0 && <option value="">{"请先创建项目"}</option>}{projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><label>{"需求标题"}</label><input value={reqImportForm.title} placeholder="可选，不填时默认使用文档名称" onChange={(e) => setReqImportForm((prev) => ({ ...prev, title: e.target.value }))} /><label>{"上传方式"}</label><div className="radio-row"><label className="radio-item"><input type="radio" checked={reqImportForm.import_method === "file"} onChange={() => setReqImportForm((prev) => ({ ...prev, import_method: "file", jira_url: "" }))} /> {"上传文件"}</label><label className="radio-item"><input type="radio" checked={reqImportForm.import_method === "jira"} onChange={() => setReqImportForm((prev) => ({ ...prev, import_method: "jira" }))} /> {"Jira 链接"}</label></div>{reqImportForm.import_method === "file" ? <><label><span className="required">*</span>{"选择文件"}</label><label className="upload-dropzone"><input type="file" className="hidden-input" accept={importConfig.upload_extensions?.join(",") || ".pdf,.doc,.docx,.txt,.md"} onChange={(e) => handleImportFile(e.target.files?.[0] || null)} /><div className="upload-icon">{"上传"}</div><div className="upload-title">{"点击上传文件"}</div><div className="upload-desc">{"支持 PDF、Word(.doc/.docx)、TXT、Markdown"}</div>{reqImportFile && <div className="upload-file-name">{`已选择：${reqImportFile.name}`}</div>}</label></> : <><label><span className="required">*</span>{"Jira 链接"}</label><input value={reqImportForm.jira_url} placeholder="请输入 Jira Issue 或页面链接" onChange={(e) => setReqImportForm((prev) => ({ ...prev, jira_url: e.target.value }))} /><div className="policy-tip">{`允许域名：${importConfig.sources?.jira?.allowed_hosts?.join("、") || "未配置"}`}</div></>}</div><div className="modal-footer"><button className="btn ghost" onClick={() => setShowReqImportModal(false)}>{"取消"}</button><button className="btn action" onClick={submitRequirementImport} disabled={!reqImportForm.project_id || (reqImportForm.import_method === "file" ? !reqImportFile : !reqImportForm.jira_url)}>{"确定"}</button></div></div></div>}
 
       {showPreviewModal && previewData && <div className="modal-mask" onClick={() => setShowPreviewModal(false)}><div className="modal-card preview-modal" onClick={(e) => e.stopPropagation()}><div className="modal-header"><h3>{"需求预览"}</h3><button className="modal-close" onClick={() => setShowPreviewModal(false)}>x</button></div><div className="modal-body preview-body"><div className="preview-meta">{`标题：${previewData.title}`}</div>{previewData.preview_type === "html" && <div className="doc-html-preview" dangerouslySetInnerHTML={{ __html: previewData.preview_html || "" }} />}{previewData.preview_type === "text" && <pre className="preview-text">{previewData.preview_text || "暂无内容"}</pre>}{previewData.preview_type === "document" && <div className="preview-doc-block"><p>{`文件：${previewData.file_name}`}</p>{previewData.file_url.endsWith(".pdf") ? <iframe title="requirement-preview" src={`${ASSET_BASE_URL}${previewData.file_url}`} className="preview-frame" /> : <p>{"当前格式暂不支持完整保真预览，建议上传 `.docx` 以获得接近原文档的排版预览。"}</p>}{previewData.file_url && <a className="swagger-link" href={`${ASSET_BASE_URL}${previewData.file_url}`} target="_blank" rel="noreferrer">{"打开文件"}</a>}</div>}{previewData.preview_type === "link" && <div className="preview-doc-block"><p>{"来源：Jira 链接"}</p><a className="swagger-link" href={previewData.source_url} target="_blank" rel="noreferrer">{"打开 Jira"}</a></div>}</div></div></div>}
+
+      {showCaseExportModal && (
+        <div className="modal-mask" onClick={() => !exportingCases && setShowCaseExportModal(false)}>
+          <div className="modal-card case-export-modal compact-export-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header compact-export-header">
+              <h3>{"用例导出"}</h3>
+              <button className="modal-close" onClick={() => !exportingCases && setShowCaseExportModal(false)}>x</button>
+            </div>
+            <div className="modal-body case-export-body compact-export-body">
+              <label className="case-export-format-stack">
+                <span>{"导出格式"}</span>
+                <select
+                  value={caseExportFormat}
+                  onChange={(e) => {
+                    const nextFormat = e.target.value;
+                    setCaseExportFormat(nextFormat);
+                    resetCaseExportConfig(nextFormat);
+                  }}
+                  disabled={exportingCases}
+                >
+                  <option value="excel">Excel</option>
+                  <option value="word">Word</option>
+                </select>
+              </label>
+
+              {caseExportFormat === "excel" && (
+                <div className="case-export-config-panel compact-export-panel">
+                  <div className="compact-export-panel-head">
+                    <div>
+                      <div className="case-export-panel-title">{"???"}</div>
+                      <div className="case-export-panel-desc">{"?????????????????????"}</div>
+                    </div>
+                    <div className="compact-export-actions">
+                      <div className="compact-export-dropdown">
+                        <button
+                          type="button"
+                          className="btn ghost small compact-export-dropdown-btn"
+                          onClick={() => setShowCaseExportFieldMenu((prev) => !prev)}
+                          disabled={exportingCases}
+                        >
+                          {"?"}
+                        </button>
+                        {showCaseExportFieldMenu && (
+                          <div className="compact-export-dropdown-menu">
+                            {CASE_EXPORT_FIELD_COLUMNS.map((field) => {
+                              const checked = caseExportFields.includes(field.key);
+                              return (
+                                <label key={field.key} className="compact-export-option">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => toggleCaseExportField(field.key)}
+                                    disabled={exportingCases}
+                                  />
+                                  <span>{field.label}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="case-export-selected-row compact-export-selected-row">
+                    {getSelectedCaseExportColumns().map((field) => (
+                      <div
+                        key={field.key}
+                        className={draggingCaseExportField === field.key ? "case-export-selected-chip dragging" : "case-export-selected-chip"}
+                        draggable={!exportingCases}
+                        onDragStart={() => setDraggingCaseExportField(field.key)}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={() => {
+                          reorderCaseExportField(draggingCaseExportField, field.key);
+                          setDraggingCaseExportField("");
+                        }}
+                        onDragEnd={() => setDraggingCaseExportField("")}
+                      >
+                        <span className="case-export-selected-chip-label">{field.label}</span>
+                        <button
+                          type="button"
+                          className="case-export-selected-chip-remove"
+                          onClick={() => toggleCaseExportField(field.key)}
+                          disabled={exportingCases || caseExportFields.length <= 1}
+                          aria-label={`??${field.label}`}
+                          title={`??${field.label}`}
+                        >
+                          x
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn ghost" onClick={() => setShowCaseExportModal(false)} disabled={exportingCases}>{"取消"}</button>
+              <button className="btn action" onClick={submitCaseExport} disabled={exportingCases || caseExportFields.length === 0}>{exportingCases ? "导出中..." : "确认导出"}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showCaseModuleModal && (
         <div className="modal-mask" onClick={() => setShowCaseModuleModal(false)}>

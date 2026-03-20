@@ -1,22 +1,32 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import MindElixir from "mind-elixir";
 import "mind-elixir/style.css";
+import loadingGif from "./assets/loading.gif";
 import {
   confirmTestCaseWorkflowStage,
   generateTestCaseWorkflowStage,
+  getDictionaries,
   getTestCaseWorkflow,
   rollbackTestCaseWorkflowStage,
   updateTestCaseWorkflowDraft,
 } from "./api";
 
-const DEFAULT_CASE_TYPES = [
-  "冒烟测试",
-  "功能测试",
-  "边界测试",
-  "异常测试",
-  "权限测试",
-  "安全测试",
-  "兼容性测试",
+const CASE_TYPE_DICT_OPTIONS = [
+  { key: "smoke", value: "冒烟测试" },
+  { key: "functional", value: "功能测试" },
+  { key: "boundary", value: "边界测试" },
+  { key: "exception", value: "异常测试" },
+  { key: "permission", value: "权限测试" },
+  { key: "security", value: "安全测试" },
+  { key: "compatibility", value: "兼容性测试" },
+];
+
+const CASE_TYPE_LABEL_MAP = Object.fromEntries(CASE_TYPE_DICT_OPTIONS.map((item) => [item.key, item.value]));
+const DEFAULT_PRIORITY_OPTIONS = [
+  { key: "P0", value: "高级" },
+  { key: "P1", value: "中级" },
+  { key: "P2", value: "低级" },
+  { key: "P3", value: "最低级" },
 ];
 
 const DEFAULT_KNOWLEDGE_BASES = [
@@ -61,7 +71,7 @@ function getStageStatusLabel(stage) {
   return "未解锁";
 }
 
-function createEmptyCase(caseType = "功能测试") {
+function createEmptyCase(caseType = "") {
   return {
     test_point: "",
     title: "",
@@ -84,12 +94,24 @@ function formatLines(value) {
   return (value || []).join("\n");
 }
 
+function mapCaseTypeOption(item) {
+  return typeof item === "string" ? { key: item, value: CASE_TYPE_LABEL_MAP[item] || item } : item;
+}
+
+function normalizeDraftCase(caseItem) {
+  return {
+    ...caseItem,
+    priority: caseItem?.priority || "",
+    case_type: caseItem?.case_type || "",
+  };
+}
+
 function normalizeDraftStage(stage) {
   return {
     content: stage.content || "",
     prompt: stage.prompt || "",
-    generated_cases: stage.generated_cases || [],
-    case_types: stage.case_types || (stage.key === "cases" ? ["功能测试"] : []),
+    generated_cases: (stage.generated_cases || []).map(normalizeDraftCase),
+    case_types: stage.case_types || [],
     knowledge_bases: stage.knowledge_bases || [],
     use_knowledge_base: Boolean(stage.use_knowledge_base),
   };
@@ -145,13 +167,13 @@ function collectRawMarkdownNodes(content) {
 }
 
 function parseMarkdownToMindData(content, title) {
+  const nodes = collectRawMarkdownNodes(content);
   const root = {
     id: "root",
-    topic: title || "阶段分析",
+    topic: nodes.length ? "Mind Map" : (title || "Stage Analysis"),
     expanded: true,
     children: [],
   };
-  const nodes = collectRawMarkdownNodes(content);
   const headingLevels = nodes.filter((item) => item.kind === "heading").map((item) => item.rawLevel);
   const headingBaseLevel = headingLevels.length ? Math.min(...headingLevels) : 1;
   const stack = [root];
@@ -183,6 +205,21 @@ function parseMarkdownToMindData(content, title) {
     parent.children.push(node);
     stack[level] = node;
   });
+
+  if (root.children?.length === 1) {
+    const promotedRoot = {
+      ...root.children[0],
+      id: "root",
+      direction: undefined,
+    };
+    (promotedRoot.children || []).forEach((child, index) => {
+      child.direction = index % 2 === 0 ? MindElixir.RIGHT : MindElixir.LEFT;
+    });
+    return {
+      nodeData: promotedRoot,
+      direction: MindElixir.SIDE,
+    };
+  }
 
   return {
     nodeData: root,
@@ -458,7 +495,13 @@ function getInitialDrafts(stages = []) {
 }
 
 function getCaseTypeOptions(stage) {
-  return stage?.case_type_options?.length ? stage.case_type_options : DEFAULT_CASE_TYPES;
+  const options = stage?.case_type_options?.length ? stage.case_type_options : CASE_TYPE_DICT_OPTIONS;
+  return options.map(mapCaseTypeOption);
+}
+
+function getPriorityOptions(stage, localOptions) {
+  if (stage?.priority_options?.length) return stage.priority_options;
+  return localOptions?.length ? localOptions : DEFAULT_PRIORITY_OPTIONS;
 }
 
 function getKnowledgeBaseOptions(stage) {
@@ -474,12 +517,22 @@ function getRegenerateLabel(stage) {
 export default function TestCaseWorkflowPage({ requirementId, onBack, onCasesChanged }) {
   const [data, setData] = useState(null);
   const [drafts, setDrafts] = useState({});
+  const [priorityOptions, setPriorityOptions] = useState([]);
   const [activeStageKey, setActiveStageKey] = useState("clarify");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState(null);
   const [kbDropdownOpen, setKbDropdownOpen] = useState(false);
   const [activeView, setActiveView] = useState("xmind");
+  const [generatingStageKey, setGeneratingStageKey] = useState("");
+  const noticeTimerRef = useRef(null);
+
+  function showNotice(type, message) {
+    setNotice({ type, message });
+    window.clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = window.setTimeout(() => setNotice(null), 1000);
+  }
 
   async function loadWorkflow() {
     setLoading(true);
@@ -508,6 +561,12 @@ export default function TestCaseWorkflowPage({ requirementId, onBack, onCasesCha
   }, [requirementId]);
 
   useEffect(() => {
+    getDictionaries("case_priority")
+      .then((result) => setPriorityOptions(result.items || []))
+      .catch(() => setPriorityOptions([]));
+  }, []);
+
+  useEffect(() => {
     setActiveView(activeStageKey === "cases" ? "text" : "xmind");
   }, [activeStageKey]);
 
@@ -518,7 +577,10 @@ export default function TestCaseWorkflowPage({ requirementId, onBack, onCasesCha
       }
     };
     window.addEventListener("mousedown", handleClickOutside);
-    return () => window.removeEventListener("mousedown", handleClickOutside);
+    return () => {
+      window.removeEventListener("mousedown", handleClickOutside);
+      window.clearTimeout(noticeTimerRef.current);
+    };
   }, []);
 
   const stages = data?.workflow?.stages || [];
@@ -526,7 +588,9 @@ export default function TestCaseWorkflowPage({ requirementId, onBack, onCasesCha
   const activeDraft = drafts[activeStage?.key] || normalizeDraftStage(activeStage || { key: "" });
   const canEdit = Boolean(activeStage && !activeStage.is_locked && activeStage.is_active);
   const caseTypeOptions = getCaseTypeOptions(activeStage);
+  const casePriorityOptions = getPriorityOptions(activeStage, priorityOptions);
   const knowledgeBaseOptions = getKnowledgeBaseOptions(activeStage);
+  const isGeneratingStage = Boolean(submitting && generatingStageKey === activeStage?.key);
 
   function patchDraft(stageKey, patch) {
     setDrafts((prev) => ({
@@ -565,14 +629,22 @@ export default function TestCaseWorkflowPage({ requirementId, onBack, onCasesCha
   async function saveDraft() {
     if (!activeStage) return;
     const payload = buildDraftPayload(activeStage.key, activeDraft);
-    await submitAction(async () => {
+    setSubmitting(true);
+    setError("");
+    try {
       const next = await updateTestCaseWorkflowDraft(requirementId, payload);
       setData(next);
       setDrafts(getInitialDrafts(next.workflow.stages));
       if (activeStage.key === "cases" && onCasesChanged) {
         onCasesChanged();
       }
-    });
+      showNotice("success", "保存成功");
+    } catch (e) {
+      setError(e.message || "操作失败");
+      showNotice("error", "保存失败");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   async function regenerateStage() {
@@ -584,11 +656,35 @@ export default function TestCaseWorkflowPage({ requirementId, onBack, onCasesCha
       knowledge_bases: activeDraft.knowledge_bases || [],
       use_knowledge_base: Boolean(activeDraft.use_knowledge_base),
     };
-    await submitAction(async () => {
-      const next = await generateTestCaseWorkflowStage(requirementId, payload);
-      setData(next);
-      setDrafts(getInitialDrafts(next.workflow.stages));
-    });
+    setGeneratingStageKey(activeStage.key);
+    if (activeStage.key === "cases") {
+      setSubmitting(true);
+      setError("");
+      patchDraft(activeStage.key, {
+        content: "",
+        generated_cases: [],
+      });
+      try {
+        const next = await generateTestCaseWorkflowStage(requirementId, payload);
+        setData(next);
+        setDrafts(getInitialDrafts(next.workflow.stages));
+      } catch (e) {
+        setError(e.message || "????");
+      } finally {
+        setGeneratingStageKey("");
+        setSubmitting(false);
+      }
+      return;
+    }
+    try {
+      await submitAction(async () => {
+        const next = await generateTestCaseWorkflowStage(requirementId, payload);
+        setData(next);
+        setDrafts(getInitialDrafts(next.workflow.stages));
+      });
+    } finally {
+      setGeneratingStageKey("");
+    }
   }
 
   async function confirmStage() {
@@ -627,13 +723,8 @@ export default function TestCaseWorkflowPage({ requirementId, onBack, onCasesCha
     } else {
       current.add(caseType);
     }
-    const nextTypes = Array.from(current);
     patchDraft(activeStage.key, {
-      case_types: nextTypes,
-      generated_cases: (activeDraft.generated_cases || []).map((item) => ({
-        ...item,
-        case_type: nextTypes.includes(item.case_type) ? item.case_type : (nextTypes[0] || ""),
-      })),
+      case_types: Array.from(current),
     });
   }
 
@@ -671,7 +762,7 @@ export default function TestCaseWorkflowPage({ requirementId, onBack, onCasesCha
     patchDraft(activeStage.key, {
       generated_cases: [
         ...(activeDraft.generated_cases || []),
-        createEmptyCase(activeDraft.case_types?.[0] || caseTypeOptions[0] || "功能测试"),
+        createEmptyCase(activeDraft.case_types?.[0] || ""),
       ],
     });
   }
@@ -744,10 +835,20 @@ export default function TestCaseWorkflowPage({ requirementId, onBack, onCasesCha
         </div>
       </div>
 
+      {notice && (
+        <div className="floating-notice-wrap">
+          <div className={notice.type === "success" ? "floating-notice success" : "floating-notice error"}>{notice.message}</div>
+        </div>
+      )}
       {error && <div className="error-banner">{error}</div>}
 
       <div className="case-workflow-layout">
-        <div className="panel case-workflow-main">
+        <div className={isGeneratingStage ? "panel case-workflow-main is-busy" : "panel case-workflow-main"}>
+          {isGeneratingStage && (
+            <div className="case-workflow-loading-mask">
+              <img src={loadingGif} alt="???" className="case-workflow-loading-image" />
+            </div>
+          )}
           {activeStage && (
             <>
               <div className="case-stage-head">
@@ -819,7 +920,7 @@ export default function TestCaseWorkflowPage({ requirementId, onBack, onCasesCha
                     value={activeDraft.prompt}
                     onChange={(event) => patchDraft(activeStage.key, { prompt: event.target.value })}
                     readOnly={!canEdit}
-                    placeholder="可以补充额外提示词，让大模型重新生成更贴近预期的结果。"
+                    placeholder="可以补充额外提示词，让模型重新生成更贴近期望的结果。"
                   />
 
                   {activeStage.template_content && (
@@ -852,14 +953,14 @@ export default function TestCaseWorkflowPage({ requirementId, onBack, onCasesCha
                       <label className="case-stage-label required-inline">测试类型</label>
                       <div className="case-check-group">
                         {caseTypeOptions.map((item) => (
-                          <label key={item} className={activeDraft.case_types?.includes(item) ? "case-check-chip active" : "case-check-chip"}>
+                          <label key={item.key} className={activeDraft.case_types?.includes(item.key) ? "case-check-chip active" : "case-check-chip"}>
                             <input
                               type="checkbox"
-                              checked={activeDraft.case_types?.includes(item)}
-                              onChange={() => toggleCaseType(item)}
+                              checked={activeDraft.case_types?.includes(item.key)}
+                              onChange={() => toggleCaseType(item.key)}
                               disabled={!canEdit}
                             />
-                            <span>{item}</span>
+                            <span>{item.value}</span>
                           </label>
                         ))}
                       </div>
@@ -921,7 +1022,7 @@ export default function TestCaseWorkflowPage({ requirementId, onBack, onCasesCha
                       value={activeDraft.prompt}
                       onChange={(event) => patchDraft(activeStage.key, { prompt: event.target.value })}
                       readOnly={!canEdit}
-                      placeholder="可以在这里补充额外提示词，让大模型在当前阶段重新生成更贴近你的结果。"
+                      placeholder="可以在这里补充额外提示词，让模型在当前阶段重新生成更贴近你的结果。"
                     />
 
                     <div className="case-generation-actions">
@@ -938,101 +1039,110 @@ export default function TestCaseWorkflowPage({ requirementId, onBack, onCasesCha
                   </div>
 
                   <div className="case-list-shell">
-                    <table className="case-edit-table">
-                      <thead>
-                        <tr>
-                          <th>序号</th>
-                          <th>测试点</th>
-                          <th>用例名称</th>
-                          <th>前置条件</th>
-                          <th>测试步骤</th>
-                          <th>预期结果</th>
-                          <th>优先级</th>
-                          <th>测试类型</th>
-                          <th>操作</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {caseRows.length === 0 && (
+                    <div className="case-list-scroll">
+                      <table className="case-edit-table">
+                        <thead>
                           <tr>
-                            <td colSpan="9" className="empty">暂无用例，请先点击“生成/重新生成用例”或手动新增。</td>
+                            <th>序号</th>
+                            <th>测试点</th>
+                            <th>用例名称</th>
+                            <th>前置条件</th>
+                            <th>测试步骤</th>
+                            <th>预期结果</th>
+                            <th>优先级</th>
+                            <th>测试类型</th>
+                            <th>操作</th>
                           </tr>
-                        )}
-                        {caseRows.map((item, index) => (
-                          <tr key={`case-row-${index}`}>
-                            <td>{index + 1}</td>
-                            <td>
-                              <textarea
-                                className="case-cell-textarea compact"
-                                value={item.test_point || ""}
-                                onChange={(event) => updateCase(index, { test_point: event.target.value })}
-                                readOnly={!canEdit}
-                              />
-                            </td>
-                            <td>
-                              <textarea
-                                className="case-cell-textarea compact"
-                                value={item.title || ""}
-                                onChange={(event) => updateCase(index, { title: event.target.value })}
-                                readOnly={!canEdit}
-                              />
-                            </td>
-                            <td>
-                              <textarea
-                                className="case-cell-textarea"
-                                value={formatLines(item.preconditions)}
-                                onChange={(event) => updateCase(index, { preconditions: parseLines(event.target.value) })}
-                                readOnly={!canEdit}
-                              />
-                            </td>
-                            <td>
-                              <textarea
-                                className="case-cell-textarea"
-                                value={formatLines(item.steps)}
-                                onChange={(event) => updateCase(index, { steps: parseLines(event.target.value) })}
-                                readOnly={!canEdit}
-                              />
-                            </td>
-                            <td>
-                              <textarea
-                                className="case-cell-textarea"
-                                value={formatLines(item.expected)}
-                                onChange={(event) => updateCase(index, { expected: parseLines(event.target.value) })}
-                                readOnly={!canEdit}
-                              />
-                            </td>
-                            <td>
+                        </thead>
+                        <tbody>
+                          {caseRows.length === 0 && (
+                            <tr>
+                              <td colSpan="9" className="empty">暂无用例，请先点击“生成/重新生成用例”或手动新增。</td>
+                            </tr>
+                          )}
+                          {caseRows.map((item, index) => (
+                            <tr key={`case-row-${index}`}>
+                              <td>{index + 1}</td>
+                              <td>
+                                <textarea
+                                  className="case-cell-textarea compact"
+                                  value={item.test_point || ""}
+                                  onChange={(event) => updateCase(index, { test_point: event.target.value })}
+                                  readOnly={!canEdit}
+                                />
+                              </td>
+                              <td>
+                                <textarea
+                                  className="case-cell-textarea compact"
+                                  value={item.title || ""}
+                                  onChange={(event) => updateCase(index, { title: event.target.value })}
+                                  readOnly={!canEdit}
+                                />
+                              </td>
+                              <td>
+                                <textarea
+                                  className="case-cell-textarea"
+                                  value={formatLines(item.preconditions)}
+                                  onChange={(event) => updateCase(index, { preconditions: parseLines(event.target.value) })}
+                                  readOnly={!canEdit}
+                                />
+                              </td>
+                              <td>
+                                <textarea
+                                  className="case-cell-textarea"
+                                  value={formatLines(item.steps)}
+                                  onChange={(event) => updateCase(index, { steps: parseLines(event.target.value) })}
+                                  readOnly={!canEdit}
+                                />
+                              </td>
+                              <td>
+                                <textarea
+                                  className="case-cell-textarea"
+                                  value={formatLines(item.expected)}
+                                  onChange={(event) => updateCase(index, { expected: parseLines(event.target.value) })}
+                                  readOnly={!canEdit}
+                                />
+                              </td>
+                              <td>
+                                <select
+                                  value={item.priority || ""}
+                                  onChange={(event) => updateCase(index, { priority: event.target.value })}
+                                  disabled={!canEdit}
+                                >
+                                  <option value="">请选择优先级</option>
+                                  {casePriorityOptions.map((priority) => (
+                                    <option key={priority.key} value={priority.key}>
+                                      {`${priority.key} - ${priority.value}`}
+                                    </option>
+                                  ))}
+                                </select>
+                              </td>
+                              <td>
                               <select
-                                value={item.priority || "P2"}
-                                onChange={(event) => updateCase(index, { priority: event.target.value })}
-                                disabled={!canEdit}
-                              >
-                                <option value="P1">P1</option>
-                                <option value="P2">P2</option>
-                                <option value="P3">P3</option>
-                              </select>
-                            </td>
-                            <td>
-                              <select
-                                value={item.case_type || activeDraft.case_types?.[0] || ""}
+                                value={item.case_type || ""}
                                 onChange={(event) => updateCase(index, { case_type: event.target.value })}
                                 disabled={!canEdit}
                               >
-                                {(activeDraft.case_types?.length ? activeDraft.case_types : caseTypeOptions).map((type) => (
-                                  <option key={type} value={type}>{type}</option>
+                                <option value="">请选择用例类型</option>
+                                {Array.from(new Set([
+                                  ...(activeDraft.case_types?.length ? activeDraft.case_types : caseTypeOptions.map((type) => type.key)),
+                                  item.case_type || "",
+                                ].filter(Boolean))).map((type) => (
+                                  <option key={type} value={type}>{CASE_TYPE_LABEL_MAP[type] || type}</option>
                                 ))}
                               </select>
-                            </td>
-                            <td>
-                              <div className="case-row-actions">
-                                <button type="button" className="link" onClick={() => duplicateCase(index)} disabled={!canEdit}>复制</button>
-                                <button type="button" className="link link-danger" onClick={() => deleteCase(index)} disabled={!canEdit}>删除</button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                              </td>
+                              <td>
+                                <div className="case-row-actions">
+                                  <button type="button" className="link" onClick={() => duplicateCase(index)} disabled={!canEdit}>复制</button>
+                                  <button type="button" className="link link-danger" onClick={() => deleteCase(index)} disabled={!canEdit}>删除</button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
 
                   {activeStage.template_content && (
@@ -1050,3 +1160,4 @@ export default function TestCaseWorkflowPage({ requirementId, onBack, onCasesCha
     </section>
   );
 }
+

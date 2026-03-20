@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from typing import Any
 
@@ -9,6 +10,7 @@ from app.store.memory_db import db
 
 
 JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
+logger = logging.getLogger("aitest.llm")
 
 
 def _chat_completions_url(api_url: str) -> str:
@@ -47,6 +49,90 @@ def _extract_message_text(message: Any) -> str:
     return ""
 
 
+def _try_load_json(text: str) -> dict[str, Any] | None:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _extract_balanced_json_object(text: str) -> str | None:
+    start = text.find("{")
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escape = False
+
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+            continue
+        if char == "{":
+            depth += 1
+            continue
+        if char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+
+    return None
+
+
+def _escape_raw_newlines_in_strings(text: str) -> str:
+    chars: list[str] = []
+    in_string = False
+    escape = False
+
+    for char in text:
+        if in_string:
+            if escape:
+                chars.append(char)
+                escape = False
+                continue
+            if char == "\\":
+                chars.append(char)
+                escape = True
+                continue
+            if char == '"':
+                chars.append(char)
+                in_string = False
+                continue
+            if char == "\n":
+                chars.append("\\n")
+                continue
+            if char == "\r":
+                chars.append("\\r")
+                continue
+            if char == "\t":
+                chars.append("\\t")
+                continue
+            chars.append(char)
+            continue
+
+        chars.append(char)
+        if char == '"':
+            in_string = True
+
+    return "".join(chars)
+
+
+def _strip_trailing_commas(text: str) -> str:
+    return re.sub(r",\s*([}\]])", r"\1", text)
+
+
 async def call_chat_completion(
     *,
     api_url: str,
@@ -75,14 +161,38 @@ async def call_chat_completion(
         "Content-Type": "application/json",
     }
 
+    logger.info(
+        "llm_request_start url=%s model=%s message_count=%s temperature=%s max_tokens=%s timeout=%s",
+        url,
+        model_name,
+        len(messages),
+        temperature,
+        max_tokens,
+        timeout,
+    )
+
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
+            logger.info(
+                "llm_request_success url=%s model=%s status_code=%s",
+                url,
+                model_name,
+                response.status_code,
+            )
     except httpx.HTTPStatusError as exc:
         detail = exc.response.text or f"HTTP {exc.response.status_code}"
+        logger.exception(
+            "llm_request_http_error url=%s model=%s status_code=%s detail=%s",
+            url,
+            model_name,
+            exc.response.status_code,
+            detail,
+        )
         raise HTTPException(status_code=502, detail=f"LLM request failed: {detail}") from exc
     except httpx.HTTPError as exc:
+        logger.exception("llm_request_connection_error url=%s model=%s", url, model_name)
         raise HTTPException(status_code=502, detail=f"LLM connection failed: {exc}") from exc
 
     data = response.json()
@@ -95,6 +205,12 @@ async def call_chat_completion(
     content = _extract_message_text(message)
     if not content:
         raise HTTPException(status_code=502, detail="LLM response content is empty")
+
+    logger.info(
+        "llm_response_parsed model=%s content_preview=%s",
+        data.get("model") or model_name,
+        content[:300].replace("\n", "\\n"),
+    )
 
     return {
         "content": content,
@@ -132,14 +248,39 @@ def extract_json_payload(content: str) -> dict[str, Any]:
     if block_match:
         text = block_match.group(1).strip()
 
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            raise
-        return json.loads(text[start : end + 1])
+    direct = _try_load_json(text)
+    if direct is not None:
+        return direct
+
+    candidate = _extract_balanced_json_object(text)
+    if candidate is None:
+        logger.error("extract_json_payload_failed no_json_object_found content_preview=%s", text[:1000])
+        raise ValueError("no json object found")
+
+    repaired_candidates = [
+        candidate,
+        _escape_raw_newlines_in_strings(candidate),
+        _strip_trailing_commas(candidate),
+        _strip_trailing_commas(_escape_raw_newlines_in_strings(candidate)),
+    ]
+
+    for attempt_index, candidate_text in enumerate(repaired_candidates, start=1):
+        parsed = _try_load_json(candidate_text)
+        if parsed is not None:
+            if attempt_index > 1:
+                logger.warning(
+                    "extract_json_payload_repaired attempt=%s content_preview=%s",
+                    attempt_index,
+                    candidate_text[:1000],
+                )
+            return parsed
+
+    logger.error(
+        "extract_json_payload_failed invalid_json candidate_preview=%s raw_preview=%s",
+        candidate[:1000],
+        text[:1000],
+    )
+    raise ValueError("invalid json payload from llm")
 
 
 def get_active_llm_config() -> dict:

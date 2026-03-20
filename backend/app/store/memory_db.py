@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy import Boolean, DateTime, Integer, JSON, String, Text, create_engine, delete, func, select
+from sqlalchemy import Boolean, DateTime, Integer, JSON, String, Text, create_engine, delete, func, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 
@@ -111,6 +111,7 @@ class RequirementRecord(StructuredRecordMixin, Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
     body_text: Mapped[str] = mapped_column(Text, nullable=False)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False, default="", index=True)
     project: Mapped[str] = mapped_column(String(100), nullable=False, default="演示项目", index=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="草稿", index=True)
     creator: Mapped[str] = mapped_column(String(50), nullable=False, default="admin", index=True)
@@ -141,9 +142,17 @@ class TestCaseRecord(StructuredRecordMixin, Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     requirement_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    test_point: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    preconditions: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
     steps: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
     expected: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
     priority: Mapped[str] = mapped_column(String(10), nullable=False, default="P2", index=True)
+    case_type: Mapped[str] = mapped_column(String(64), nullable=False, default="", index=True)
+    module_id: Mapped[str] = mapped_column(String(64), nullable=False, default="", index=True)
+    stage: Mapped[str] = mapped_column(String(50), nullable=False, default="", index=True)
+    review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="", index=True)
+    creator: Mapped[str] = mapped_column(String(50), nullable=False, default="admin", index=True)
+    source: Mapped[str] = mapped_column(String(20), nullable=False, default="", index=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -211,6 +220,22 @@ class PromptTemplateRecord(StructuredRecordMixin, Base):
     remark: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    extra_data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class DictionaryRecord(StructuredRecordMixin, Base):
+    __tablename__ = "dictionaries"
+
+    iso_datetime_fields = ("created_at", "updated_at")
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    group: Mapped[str] = mapped_column("group", String(100), nullable=False, default="", index=True)
+    key: Mapped[str] = mapped_column("key", String(100), nullable=False, index=True)
+    value: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     extra_data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
@@ -538,6 +563,7 @@ class DatabaseStore:
         self.engine = create_engine(settings.database_url, echo=settings.echo_sql, pool_pre_ping=True)
         self.session_factory = sessionmaker(bind=self.engine, expire_on_commit=False)
         Base.metadata.create_all(self.engine)
+        self._apply_schema_updates()
 
         self.projects = StructuredRepository(self.session_factory, ProjectRecord)
         self.requirements = StructuredRepository(self.session_factory, RequirementRecord)
@@ -546,11 +572,110 @@ class DatabaseStore:
         self.agent_configs = StructuredRepository(self.session_factory, AgentConfigRecord)
         self.llm_configs = StructuredRepository(self.session_factory, LlmConfigRecord)
         self.prompt_templates = StructuredRepository(self.session_factory, PromptTemplateRecord)
+        self.dictionaries = StructuredRepository(self.session_factory, DictionaryRecord)
         self.mcp_tools = StructuredRepository(self.session_factory, MCPToolRecord)
         self.review_runs = StructuredRepository(self.session_factory, ReviewRunRecord)
         self.requirement_versions = RequirementVersionRepository(self.session_factory)
         self.requirement_reviews = RequirementReviewRepository(self.session_factory)
+        self._migrate_legacy_data()
         self._seed_admin_data()
+
+    def _apply_schema_updates(self) -> None:
+        table_updates = {
+            "dictionaries": [
+                ("group", "`group` VARCHAR(100) NOT NULL DEFAULT ''"),
+                ("sort_order", "sort_order INT NOT NULL DEFAULT 0"),
+                ("enabled", "enabled TINYINT(1) NOT NULL DEFAULT 1"),
+            ],
+            "test_cases": [
+                ("test_point", "test_point VARCHAR(200) NOT NULL DEFAULT ''"),
+                ("preconditions", "preconditions JSON NULL"),
+                ("case_type", "case_type VARCHAR(64) NOT NULL DEFAULT ''"),
+                ("module_id", "module_id VARCHAR(64) NOT NULL DEFAULT ''"),
+                ("stage", "stage VARCHAR(50) NOT NULL DEFAULT ''"),
+                ("review_status", "review_status VARCHAR(20) NOT NULL DEFAULT ''"),
+                ("creator", "creator VARCHAR(50) NOT NULL DEFAULT 'admin'"),
+                ("source", "source VARCHAR(20) NOT NULL DEFAULT ''"),
+            ],
+            "requirements": [
+                ("project_id", "project_id VARCHAR(64) NOT NULL DEFAULT ''"),
+            ],
+        }
+
+        with self.engine.begin() as connection:
+            for table_name, columns in table_updates.items():
+                existing_columns = {item["name"] for item in inspect(connection).get_columns(table_name)}
+                for column_name, ddl in columns:
+                    if column_name in existing_columns:
+                        continue
+                    connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {ddl}"))
+
+    def _migrate_legacy_data(self) -> None:
+        dictionary_key_map = {
+            ("case_priority", "高级"): ("P0", "高级", 1),
+            ("case_priority", "中级"): ("P1", "中级", 2),
+            ("case_priority", "低级"): ("P2", "低级", 3),
+            ("case_priority", "最低级"): ("P3", "最低级", 4),
+            ("case_type", "冒烟测试"): ("smoke", "冒烟测试", 1),
+            ("case_type", "功能测试"): ("functional", "功能测试", 2),
+            ("case_type", "边界测试"): ("boundary", "边界测试", 3),
+            ("case_type", "异常测试"): ("exception", "异常测试", 4),
+            ("case_type", "权限测试"): ("permission", "权限测试", 5),
+            ("case_type", "安全测试"): ("security", "安全测试", 6),
+            ("case_type", "兼容性测试"): ("compatibility", "兼容性测试", 7),
+        }
+
+        for item in self.dictionaries.values():
+            migrated = self.clone(item)
+            group = migrated.get("group", "")
+            value = migrated.get("value", "")
+            mapped = dictionary_key_map.get((group, value))
+            if mapped:
+                migrated["key"], migrated["value"], migrated["sort_order"] = mapped
+            migrated["group"] = group
+            migrated["sort_order"] = int(migrated.get("sort_order", 0) or 0)
+            migrated["enabled"] = bool(migrated.get("enabled", True))
+            self.dictionaries.save(migrated)
+
+        case_type_key_by_label = {
+            item.get("value"): item.get("key")
+            for item in self.dictionaries.values()
+            if item.get("group") == "case_type" and item.get("value")
+        }
+        module_id_by_name = {
+            item.get("name"): item.get("id")
+            for item in self.test_case_modules.values()
+            if item.get("name")
+        }
+        project_id_by_name = {
+            item.get("name"): item.get("id")
+            for item in self.projects.values()
+            if item.get("name")
+        }
+
+        for item in self.requirements.values():
+            migrated = self.clone(item)
+            if not migrated.get("project_id"):
+                migrated["project_id"] = project_id_by_name.get(str(migrated.get("project", "") or "").strip(), "")
+            self.requirements.save(migrated)
+
+        for item in self.test_cases.values():
+            migrated = self.clone(item)
+            legacy_module_name = str(migrated.pop("module", "") or "").strip()
+            if not migrated.get("module_id") and legacy_module_name:
+                migrated["module_id"] = module_id_by_name.get(legacy_module_name, "")
+            if not migrated.get("case_type") and migrated.get("case_type_label"):
+                migrated["case_type"] = case_type_key_by_label.get(migrated.get("case_type_label"), "")
+            if migrated.get("case_type") in case_type_key_by_label:
+                migrated["case_type"] = case_type_key_by_label[migrated["case_type"]]
+            migrated["test_point"] = str(migrated.get("test_point", "") or "")
+            migrated["preconditions"] = list(migrated.get("preconditions", []) or [])
+            migrated["module_id"] = str(migrated.get("module_id", "") or "")
+            migrated["stage"] = str(migrated.get("stage", "") or "")
+            migrated["creator"] = str(migrated.get("creator", "admin") or "admin")
+            migrated["review_status"] = str(migrated.get("review_status", "") or "")
+            migrated["source"] = str(migrated.get("source", "") or "")
+            self.test_cases.save(migrated)
 
     def new_id(self, scope: str = "global") -> str:
         with self.session_factory() as session:
@@ -573,6 +698,7 @@ class DatabaseStore:
         created_at = now_iso()
         updated_at = now_iso()
         self._ensure_manual_case_requirement(created_at, updated_at)
+        self._ensure_dictionary_records(created_at, updated_at)
 
         if not self.llm_configs.values():
             for payload in [
@@ -655,65 +781,79 @@ class DatabaseStore:
         }
         self.requirements[record["id"]] = record
 
+    def _ensure_dictionary_records(self, created_at: str, updated_at: str) -> None:
+        defaults = [
+            {"group": "case_type", "key": "smoke", "value": "\u5192\u70df\u6d4b\u8bd5", "sort_order": 10},
+            {"group": "case_type", "key": "functional", "value": "\u529f\u80fd\u6d4b\u8bd5", "sort_order": 20},
+            {"group": "case_type", "key": "boundary", "value": "\u8fb9\u754c\u6d4b\u8bd5", "sort_order": 30},
+            {"group": "case_type", "key": "exception", "value": "\u5f02\u5e38\u6d4b\u8bd5", "sort_order": 40},
+            {"group": "case_type", "key": "permission", "value": "\u6743\u9650\u6d4b\u8bd5", "sort_order": 50},
+            {"group": "case_type", "key": "security", "value": "\u5b89\u5168\u6d4b\u8bd5", "sort_order": 60},
+            {"group": "case_type", "key": "compatibility", "value": "\u517c\u5bb9\u6027\u6d4b\u8bd5", "sort_order": 70},
+            {"group": "case_priority", "key": "P0", "value": "\u9ad8\u7ea7", "sort_order": 10},
+            {"group": "case_priority", "key": "P1", "value": "\u4e2d\u7ea7", "sort_order": 20},
+            {"group": "case_priority", "key": "P2", "value": "\u4f4e\u7ea7", "sort_order": 30},
+            {"group": "case_priority", "key": "P3", "value": "\u6700\u4f4e\u7ea7", "sort_order": 40},
+        ]
+
+        existing_keys = {(item.get("group"), item.get("key")) for item in self.dictionaries.values()}
+        for payload in defaults:
+            identity = (payload["group"], payload["key"])
+            if identity in existing_keys:
+                continue
+            record = {
+                "id": self.new_id("dictionaries"),
+                **payload,
+                "enabled": True,
+                "created_at": created_at,
+                "updated_at": updated_at,
+            }
+            self.dictionaries[record["id"]] = record
+
     def _ensure_test_case_prompt_templates(self, created_at: str, updated_at: str) -> None:
         defaults = [
             {
-                "prompt_type": "测试用例",
-                "name": "测试用例-需求澄清",
-                "description": "用于从需求中提炼测试前必须澄清的问题、边界和风险。",
+                "prompt_type": "\u6d4b\u8bd5\u7528\u4f8b",
+                "name": "\u6d4b\u8bd5\u7528\u4f8b-\u9700\u6c42\u62c6\u89e3",
+                "description": "\u7528\u4e8e\u5148\u8bc6\u522b\u9700\u6c42\u4e2d\u7684\u529f\u80fd\u70b9\u3001\u4e3b\u6d41\u7a0b\u3001\u5173\u952e\u5206\u652f\u548c\u8fb9\u754c\u3002",
                 "content": (
-                    "你是一位资深测试分析师。请基于输入的需求信息输出“需求澄清”结果，帮助测试人员在编写测试点和测试用例前完成信息补齐。\n"
-                    "输出要求：\n"
-                    "1. 先给出对需求目标、核心流程、关键角色的理解。\n"
-                    "2. 列出阻碍测试设计的关键信息缺口，优先关注业务规则、输入输出、异常处理、权限、状态流转、依赖系统、验收标准。\n"
-                    "3. 给出建议向产品或研发确认的问题清单，问题要具体、可回答。\n"
-                    "4. 给出主要测试风险和可能造成的影响。\n"
-                    "5. 使用清晰分段和项目符号，内容可直接给测试人员使用。"
+                    "\u4f60\u662f\u4e00\u4f4d\u8d44\u6df1\u6d4b\u8bd5\u5206\u6790\u5e08\u3002\u8bf7\u57fa\u4e8e\u8f93\u5165\u7684\u9700\u6c42\u4fe1\u606f\u8f93\u51fa\u201c\u9700\u6c42\u62c6\u89e3\u201d\u7ed3\u679c\uff0c\u76ee\u6807\u662f\u5148\u660e\u786e\u8be5\u9700\u6c42\u5305\u542b\u591a\u5c11\u4e2a\u529f\u80fd\u70b9\uff0c\u4ee5\u53ca\u6bcf\u4e2a\u529f\u80fd\u70b9\u5bf9\u5e94\u7684\u4e3b\u6d41\u7a0b\u3001\u5173\u952e\u5206\u652f\u548c\u8fb9\u754c\u3002\n"
+                    "\u8f93\u51fa\u8981\u6c42\uff1a\n"
+                    "1. \u5148\u603b\u7ed3\u9700\u6c42\u76ee\u6807\uff0c\u5e76\u6982\u62ec\u8be5\u9700\u6c42\u8986\u76d6\u7684\u4e1a\u52a1\u8303\u56f4\u3002\n"
+                    "2. \u62c6\u5206\u51fa\u660e\u786e\u7684\u529f\u80fd\u70b9\u6e05\u5355\uff0c\u7ed9\u6bcf\u4e2a\u529f\u80fd\u70b9\u7f16\u53f7\uff0c\u540d\u79f0\u8981\u5177\u4f53\uff0c\u907f\u514d\u8fc7\u4e8e\u7b3c\u7edf\u3002\n"
+                    "3. \u5bf9\u6bcf\u4e2a\u529f\u80fd\u70b9\u8865\u5145\u8bf4\u660e\uff1a\u89e6\u53d1\u89d2\u8272\u3001\u524d\u7f6e\u6761\u4ef6\u3001\u6838\u5fc3\u64cd\u4f5c\u3001\u5173\u952e\u7ed3\u679c\u3002\n"
+                    "4. \u5982\u5b58\u5728\u91cd\u8981\u5206\u652f\u3001\u5f02\u5e38\u5904\u7406\u3001\u6743\u9650\u5dee\u5f02\u3001\u72b6\u6001\u6d41\u8f6c\u6216\u5916\u90e8\u4f9d\u8d56\uff0c\u9700\u8981\u5728\u5bf9\u5e94\u529f\u80fd\u70b9\u4e0b\u5355\u72ec\u6807\u51fa\u3002\n"
+                    "5. \u8f93\u51fa\u8981\u7ed3\u6784\u5316\uff0c\u4fbf\u4e8e\u540e\u7eed\u76f4\u63a5\u7ee7\u7eed\u751f\u6210\u6d4b\u8bd5\u70b9\u6216\u601d\u7ef4\u5bfc\u56fe\uff1b\u4e0d\u8981\u989d\u5916\u589e\u52a0\u201c\u9700\u6c42\u6f84\u6e05\u201d\u201c\u77e5\u8bc6\u70b9\u68b3\u7406\u201d\u7b49\u8282\u70b9\u524d\u7f00\u3002"
                 ),
                 "remark": "test-case-stage:clarify",
             },
             {
-                "prompt_type": "测试用例",
-                "name": "测试用例-测试点梳理",
-                "description": "用于按测试设计视角梳理功能、边界、异常和兼容等测试点。",
+                "prompt_type": "\u6d4b\u8bd5\u7528\u4f8b",
+                "name": "\u6d4b\u8bd5\u7528\u4f8b-\u6d4b\u8bd5\u70b9\u68b3\u7406",
+                "description": "\u7528\u4e8e\u6309\u6d4b\u8bd5\u8bbe\u8ba1\u89c6\u89d2\u68b3\u7406\u529f\u80fd\u70b9\u5bf9\u5e94\u7684\u4e3b\u6d41\u7a0b\u3001\u5206\u652f\u3001\u8fb9\u754c\u3001\u5f02\u5e38\u548c\u975e\u529f\u80fd\u6d4b\u8bd5\u70b9\u3002",
                 "content": (
-                    "你是一位资深测试设计专家。请基于需求正文以及前序阶段结论，输出“测试点梳理”结果。\n"
-                    "输出要求：\n"
-                    "1. 按模块或流程拆解测试点，优先覆盖主流程、分支流程、边界条件、异常处理、权限控制、数据校验、状态流转。\n"
-                    "2. 明确每个测试点的验证目标，避免只写标题不写检查点。\n"
-                    "3. 补充接口联动、数据一致性、兼容性、性能和稳定性等非功能测试点。\n"
-                    "4. 对高风险测试点进行单独标记并说明原因。\n"
-                    "5. 输出要结构化，便于后续直接转成测试用例。"
+                    "\u4f60\u662f\u4e00\u4f4d\u8d44\u6df1\u6d4b\u8bd5\u8bbe\u8ba1\u4e13\u5bb6\u3002\u8bf7\u57fa\u4e8e\u9700\u6c42\u6b63\u6587\u4ee5\u53ca\u524d\u5e8f\u9636\u6bb5\u7684\u9700\u6c42\u62c6\u89e3\u7ed3\u679c\uff0c\u8f93\u51fa\u201c\u6d4b\u8bd5\u70b9\u68b3\u7406\u201d\u7ed3\u679c\u3002\n"
+                    "\u8f93\u51fa\u8981\u6c42\uff1a\n"
+                    "1. \u6309\u529f\u80fd\u70b9\u5206\u7ec4\u68b3\u7406\u6d4b\u8bd5\u70b9\uff0c\u4f18\u5148\u8986\u76d6\u4e3b\u6d41\u7a0b\u3001\u5206\u652f\u6d41\u7a0b\u3001\u8fb9\u754c\u6761\u4ef6\u3001\u5f02\u5e38\u5904\u7406\u3001\u6743\u9650\u63a7\u5236\u3001\u6570\u636e\u6821\u9a8c\u548c\u72b6\u6001\u6d41\u8f6c\u3002\n"
+                    "2. \u6bcf\u4e2a\u6d4b\u8bd5\u70b9\u90fd\u8981\u5199\u660e\u9a8c\u8bc1\u76ee\u6807\uff0c\u907f\u514d\u53ea\u5217\u6807\u9898\u3002\n"
+                    "3. \u8865\u5145\u63a5\u53e3\u8054\u52a8\u3001\u6570\u636e\u4e00\u81f4\u6027\u3001\u517c\u5bb9\u6027\u3001\u6027\u80fd\u548c\u7a33\u5b9a\u6027\u7b49\u5fc5\u8981\u7684\u975e\u529f\u80fd\u6d4b\u8bd5\u70b9\u3002\n"
+                    "4. \u5bf9\u9ad8\u98ce\u9669\u6d4b\u8bd5\u70b9\u8fdb\u884c\u5355\u72ec\u6807\u8bc6\uff0c\u5e76\u8bf4\u660e\u98ce\u9669\u539f\u56e0\u3002\n"
+                    "5. \u8f93\u51fa\u8981\u7ed3\u6784\u5316\uff0c\u4fbf\u4e8e\u540e\u7eed\u76f4\u63a5\u8f6c\u6362\u6210\u6d4b\u8bd5\u7528\u4f8b\u6216\u601d\u7ef4\u5bfc\u56fe\uff1b\u4e0d\u8981\u989d\u5916\u589e\u52a0\u9636\u6bb5\u524d\u7f00\u8282\u70b9\u3002"
                 ),
                 "remark": "test-case-stage:test_points",
             },
             {
-                "prompt_type": "测试用例",
-                "name": "测试用例-审批确认",
-                "description": "用于形成提测前的确认清单、优先级和准出建议。",
+                "prompt_type": "\u6d4b\u8bd5\u7528\u4f8b",
+                "name": "\u6d4b\u8bd5\u7528\u4f8b-\u751f\u6210\u7528\u4f8b",
+                "description": "\u7528\u4e8e\u751f\u6210\u53ef\u6267\u884c\u3001\u53ef\u7f16\u8f91\u3001\u53ef\u76f4\u63a5\u5165\u5e93\u7684\u7ed3\u6784\u5316\u6d4b\u8bd5\u7528\u4f8b\u3002",
                 "content": (
-                    "你是一位测试负责人，请基于需求正文、需求澄清和测试点梳理结果，输出“审批确认”结论。\n"
-                    "输出要求：\n"
-                    "1. 明确本次测试范围、非测试范围和优先级建议。\n"
-                    "2. 给出进入测试执行前需要确认的前置条件、测试数据准备、环境依赖、角色权限和联调条件。\n"
-                    "3. 明确通过标准和验收口径，尤其是哪些结果可判定为通过、失败、阻塞。\n"
-                    "4. 列出尚未解决但需要知会的遗留风险、假设条件和规避建议。\n"
-                    "5. 内容适合评审和审批场景，语言简洁明确。"
-                ),
-                "remark": "test-case-stage:review",
-            },
-            {
-                "prompt_type": "测试用例",
-                "name": "测试用例-生成用例",
-                "description": "用于生成可执行的结构化测试用例草稿。",
-                "content": (
-                    "你是一位资深测试工程师。请基于需求正文及前序阶段结果，生成结构化测试用例。\n"
-                    "输出要求：\n"
-                    "1. 优先覆盖核心业务流、关键异常分支、边界场景、权限差异、状态流转和高风险点。\n"
-                    "2. 每条用例都要包含 title、priority、steps、expected。\n"
-                    "3. steps 必须是可执行动作，expected 必须是可验证结果，禁止笼统描述。\n"
-                    "4. priority 使用 P1/P2/P3，P1 表示核心高风险场景。\n"
-                    "5. 除结构化数据外，可补充一段总体说明，指出本轮用例覆盖重点与未覆盖风险。"
+                    "\u4f60\u662f\u4e00\u4f4d\u8d44\u6df1\u6d4b\u8bd5\u5de5\u7a0b\u5e08\u3002\u8bf7\u57fa\u4e8e\u9700\u6c42\u6b63\u6587\u53ca\u524d\u5e8f\u9636\u6bb5\u7ed3\u679c\uff0c\u751f\u6210\u7ed3\u6784\u5316\u6d4b\u8bd5\u7528\u4f8b\u3002\n"
+                    "\u8f93\u51fa\u8981\u6c42\uff1a\n"
+                    "1. \u4f18\u5148\u8986\u76d6\u6838\u5fc3\u4e1a\u52a1\u6d41\u3001\u5173\u952e\u5f02\u5e38\u5206\u652f\u3001\u8fb9\u754c\u573a\u666f\u3001\u6743\u9650\u5dee\u5f02\u3001\u72b6\u6001\u6d41\u8f6c\u548c\u9ad8\u98ce\u9669\u70b9\u3002\n"
+                    "2. \u6bcf\u6761\u7528\u4f8b\u90fd\u8981\u5305\u542b title\u3001priority\u3001steps\u3001expected\u3002\n"
+                    "3. steps \u5fc5\u987b\u662f\u53ef\u6267\u884c\u52a8\u4f5c\uff0cexpected \u5fc5\u987b\u662f\u53ef\u9a8c\u8bc1\u7ed3\u679c\uff0c\u7981\u6b62\u7b3c\u7edf\u63cf\u8ff0\u3002\n"
+                    "4. priority \u4f7f\u7528 P1/P2/P3\uff0cP1 \u8868\u793a\u6838\u5fc3\u9ad8\u98ce\u9669\u573a\u666f\u3002\n"
+                    "5. \u9664\u7ed3\u6784\u5316\u6570\u636e\u5916\uff0c\u53ef\u8865\u5145\u4e00\u6bb5\u6574\u4f53\u8bf4\u660e\uff0c\u6307\u51fa\u672c\u8f6e\u7528\u4f8b\u8986\u76d6\u91cd\u70b9\u4e0e\u672a\u8986\u76d6\u98ce\u9669\u3002"
                 ),
                 "remark": "test-case-stage:cases",
             },
